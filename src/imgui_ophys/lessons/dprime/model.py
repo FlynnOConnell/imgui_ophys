@@ -15,7 +15,7 @@ The same paper's in vivo form, d' = mean(A) / sqrt(0.5 * var(A)) with A the isol
 """
 
 import math
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
@@ -119,50 +119,6 @@ def score(f: np.ndarray, spikes: np.ndarray, fs: float, peak: int, frames: int, 
     return Score(dprime(top, bottom), top, bottom, np.array(used), np.array(centers, dtype=int), peak)
 
 
-def noise_sd(x: np.ndarray) -> float:
-    """A robust SD: 1.4826 x the median absolute deviation, so events do not inflate it."""
-    return float(1.4826 * np.median(np.abs(x - np.median(x))))
-
-
-def detect(f: np.ndarray, threshold: float, min_gap: int) -> np.ndarray:
-    """
-    Frames of local maxima more than threshold robust SDs above the median, at least min_gap frames apart (the
-    higher of two close peaks wins). What a thresholding event picker calls a spike.
-    """
-    level = np.median(f) + threshold * noise_sd(f)
-    above = f > level
-    local_max = np.r_[False, (f[1:-1] >= f[:-2]) & (f[1:-1] > f[2:]), False]
-    candidates = np.flatnonzero(above & local_max)
-    order = candidates[np.argsort(-f[candidates], kind="stable")]
-    taken = np.zeros(f.size, bool)
-    kept = []
-    for c in order:
-        if not taken[max(0, c - min_gap) : c + min_gap + 1].any():
-            kept.append(c)
-            taken[c] = True
-    return np.array(sorted(kept), dtype=int)
-
-
-def detected_spike_times(f: np.ndarray, fs: float, peak: int, threshold: float, min_gap: int) -> np.ndarray:
-    """Detected peaks moved back by peak frames: the spike times an event picker implies, in s."""
-    return (detect(f, threshold, min_gap) - peak) / fs
-
-
-# ----------------------------------------------------------------------
-# what moves it
-# ----------------------------------------------------------------------
-
-# attribute, label, unit, values; the curves in "What moves it"
-SWEEPS = (
-    ("brightness", "photons / pixel / frame", np.array([1, 2, 5, 10, 20, 50, 100, 200], dtype=float)),
-    ("pixels", "ROI pixels", np.array([5, 10, 20, 50, 100, 200, 400], dtype=float)),
-    ("neuropil", "neuropil light / ROI light", np.array([0.0, 0.25, 0.5, 0.75, 1.0, 1.5])),
-    ("read_noise", "read noise, e- / pixel", np.array([0.0, 1.0, 2.0, 4.0, 6.0, 8.0, 10.0])),
-    ("fs", "frame rate, Hz (same light per second)", np.array([5, 10, 15, 30, 60, 120], dtype=float)),
-)
-CALCIUM = tuple(i for i in sim.INDICATORS if i.kind == "calcium")
-
-
 def score_params(p: sim.TraceParams, frames: int, trace: Optional[sim.Trace] = None) -> Score:
     """Simulate p (or take trace) and score it on the recorded photons with the true spike times."""
     tr = sim.make_trace(p) if trace is None else trace
@@ -170,20 +126,32 @@ def score_params(p: sim.TraceParams, frames: int, trace: Optional[sim.Trace] = N
     return score(tr.recorded, tr.spikes, p.fs, peak_frames(ind, p.fs), frames, quiet_before(ind))
 
 
-def sweep(p: sim.TraceParams, attr: str, values: np.ndarray, frames: int) -> np.ndarray:
-    """d' at each value of attr, everything else as in p. A frame rate sweep keeps photons per second fixed."""
-    out = np.empty(values.size)
-    for i, v in enumerate(values):
-        if attr == "fs":
-            q = replace(p, fs=float(v), brightness=p.brightness * p.fs / float(v))
-        elif attr == "pixels":
-            q = replace(p, pixels=int(v))
-        else:
-            q = replace(p, **{attr: float(v)})
-        out[i] = score_params(q, frames).d
-    return out
+def noise_rows(f: np.ndarray, spikes: np.ndarray, fs: float, peak: int, frames: int, before: float, targets: tuple, seed: int = 7) -> list:
+    """
+    (d', trace) per target: one draw of white noise added to f, scaled by bisection until d' lands on the target;
+    f itself comes last. A target above f's own d' cannot be reached.
 
-
-def by_indicator(p: sim.TraceParams, frames: int) -> list[tuple[str, float]]:
-    """d' per calcium indicator with p's other settings."""
-    return [(ind.name, score_params(replace(p, indicator=ind.name), frames).d) for ind in CALCIUM]
+    Raises
+    ------
+    ValueError
+        If a target exceeds f's d'.
+    """
+    d_clean = score(f, spikes, fs, peak, frames, before).d
+    z = np.random.default_rng(seed).standard_normal(f.size)
+    rows = []
+    for target in targets:
+        if not target < d_clean:
+            raise ValueError(f"d' = {target} is not below the clean trace's {d_clean:.2f}")
+        lo, hi = 0.0, float(np.std(f))
+        while score(f + hi * z, spikes, fs, peak, frames, before).d > target:
+            hi *= 2.0
+        for _ in range(40):
+            mid = 0.5 * (lo + hi)
+            if score(f + mid * z, spikes, fs, peak, frames, before).d > target:
+                lo = mid
+            else:
+                hi = mid
+        noisy = f + 0.5 * (lo + hi) * z
+        rows.append((score(noisy, spikes, fs, peak, frames, before).d, noisy))
+    rows.append((d_clean, f))
+    return rows

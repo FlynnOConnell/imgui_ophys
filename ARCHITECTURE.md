@@ -47,9 +47,10 @@ idling is off so playback and iterative fits run at full rate; otherwise the win
   window.
 - Signal quality (`dprime/model.py`): d' as in the jGCaMP8 paper, (mean top - mean bottom) / pooled SD, on the
   Traces simulator with the spike times known: `score` takes a window of frames before each isolated spike and one
-  from the response peak on, pooled across spikes; `accuracy` is Phi(d' / 2). `detect` is a threshold event picker,
-  for scoring without ground truth (and on a cell that never fires). `sweep` re-simulates one setting at a time; the
-  view re-runs the sweeps 0.3 s after the last slider change.
+  from the response peak on, pooled across spikes; `accuracy` is Phi(d' / 2). `noise_rows` adds white noise to a
+  clean trace by bisection until d' lands on each target, for the example rows. The view follows one spike
+  (median amplitude) and keeps its plot ranges fixed over the reference cells, so a light or bleaching change moves
+  the dots instead of the axes.
 - SVD (under Other, `svd/model.py`): `Peel` finds the pieces one at a time by power iteration and deflation (u = R v,
   v = R' u until v settles, then subtract s u v'), one half-step per click; its pieces equal `np.linalg.svd`'s
   (tested). Signs are fixed so each U column's largest entry is positive.

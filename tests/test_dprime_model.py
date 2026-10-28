@@ -1,6 +1,7 @@
 import math
 
 import numpy as np
+import pytest
 
 from imgui_ophys import sim
 from imgui_ophys.lessons.dprime import model as M
@@ -42,24 +43,13 @@ def test_brighter_cell_scores_higher():
     assert bright.d > 2 * dim.d
 
 
-def test_sweep_and_indicators_return_one_score_per_setting():
-    p = sim.TraceParams(duration=60, seed=1)
-    d = M.sweep(p, "brightness", np.array([1.0, 100.0]), frames=6)
-    assert d.shape == (2,) and d[1] > d[0]
-    assert [n for n, _ in M.by_indicator(p, frames=6)] == [i.name for i in M.CALCIUM]
-
-
-def test_detector_finds_peaks_above_threshold_and_keeps_them_apart():
-    f = np.zeros(100)
-    f[[20, 22, 60]] = [5.0, 4.0, 5.0]
-    f += np.sin(np.arange(100)) * 0.1
-    assert np.array_equal(M.detect(f, threshold=3.0, min_gap=5), [20, 60])
-    assert np.array_equal(M.detect(f, threshold=3.0, min_gap=1), [20, 22, 60])
-
-
-def test_detector_on_a_silent_cell_still_produces_events():
-    p = sim.TraceParams(rate=0.0, duration=60, seed=2)
+def test_noise_rows_land_on_their_targets_and_end_with_the_clean_trace():
+    p = sim.TraceParams(brightness=5000.0, neuropil=0.0, read_noise=0.0, bleach=0.0, duration=40, seed=3)
     tr = sim.make_trace(p)
-    dff = sim.to_dff(tr.recorded, float(np.percentile(tr.recorded, 20)))
-    picked = M.detected_spike_times(dff, p.fs, peak=1, threshold=3.0, min_gap=7)
-    assert picked.size > 0
+    dff = sim.to_dff(tr.recorded, sim.baseline(tr.recorded, "running window", int(5 * p.fs)))
+    peak, before = M.peak_frames(sim.BY_NAME[p.indicator], p.fs), M.quiet_before(sim.BY_NAME[p.indicator])
+    rows = M.noise_rows(dff, tr.spikes, p.fs, peak, 6, before, (1.0, 3.0))
+    assert [round(d, 1) for d, _ in rows[:2]] == [1.0, 3.0]
+    assert rows[-1][0] > 3.0 and np.array_equal(rows[-1][1], dff)
+    with pytest.raises(ValueError):
+        M.noise_rows(dff, tr.spikes, p.fs, peak, 6, before, (50.0,))
