@@ -53,7 +53,7 @@ def test_every_stage_and_subsection_renders():
         for j in range(len(lesson.outline())):
             steps.append(lambda a, j=j: setattr(a.lesson, "jump", j))
     run_frames(app, steps)
-    assert [x.key for x in app.lessons] == ["motion", "nmf", "traces", "svd"]
+    assert [x.key for x in app.lessons] == ["motion", "nmf", "traces", "dprime", "svd"]
 
 
 def test_nmf_every_method_and_view_renders():

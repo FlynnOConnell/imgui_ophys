@@ -56,11 +56,11 @@ def operator(symbol: str, height: float) -> None:
     imgui.same_line(0, 0.4 * em)
 
 
-def table(name: str, rows) -> None:
-    """Two columns: a key in KEY and its meaning, wrapped."""
+def table(name: str, rows, width: float = 0.0) -> None:
+    """Two columns: a key in KEY and its meaning, wrapped. width 0 takes the whole line."""
     em = imgui.get_font_size()
     flags = imgui.TableFlags_.row_bg | imgui.TableFlags_.borders_inner_h
-    if not imgui.begin_table(f"##{name}", 2, flags):
+    if not imgui.begin_table(f"##{name}", 2, flags, imgui.ImVec2(width, 0)):
         return
     imgui.table_setup_column("key", imgui.TableColumnFlags_.width_fixed, max(imgui.calc_text_size(k).x for k, _ in rows) + em)
     imgui.table_setup_column("meaning")

@@ -40,6 +40,7 @@ The only dependencies are `imgui-bundle` and `numpy` (which ImPlot's Python API 
 | `motion` | Motion correction | registration; rigid registration; non-rigid (piecewise rigid) registration; reference image |
 | `nmf` | Demixing (NMF) | the movie as a matrix; footprints and traces; HALS updates; NMF vs PCA |
 | `traces` | Traces | indicator response; dF/F; neuropil, bleaching and noise; temporal smoothing |
+| `dprime` | Signal quality (d') | what d' says; how it is computed; what moves it; what it misses |
 | `svd` | SVD (under Other) | rank-1 matrices; power iteration and deflation; truncated SVD |
 
 Each page lists its references at the bottom.
@@ -47,6 +48,8 @@ Each page lists its references at the bottom.
 ![HALS](docs/nmf.png)
 
 ![dF/F](docs/traces.png)
+
+![d'](docs/dprime.png)
 
 ## Text size
 

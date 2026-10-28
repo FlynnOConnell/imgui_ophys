@@ -45,6 +45,11 @@ idling is off so playback and iterative fits run at full rate; otherwise the win
 - Traces: `sim.make_trace` once per parameter change; the parts switch on and off without resimulating
   (`Trace.on`). dF/F uses F0 = the 20th percentile of what was recorded, over the whole recording or a running
   window.
+- Signal quality (`dprime/model.py`): d' as in the jGCaMP8 paper, (mean top - mean bottom) / pooled SD, on the
+  Traces simulator with the spike times known: `score` takes a window of frames before each isolated spike and one
+  from the response peak on, pooled across spikes; `accuracy` is Phi(d' / 2). `detect` is a threshold event picker,
+  for scoring without ground truth (and on a cell that never fires). `sweep` re-simulates one setting at a time; the
+  view re-runs the sweeps 0.3 s after the last slider change.
 - SVD (under Other, `svd/model.py`): `Peel` finds the pieces one at a time by power iteration and deflation (u = R v,
   v = R' u until v settles, then subtract s u v'), one half-step per click; its pieces equal `np.linalg.svd`'s
   (tested). Signs are fixed so each U column's largest entry is positive.
