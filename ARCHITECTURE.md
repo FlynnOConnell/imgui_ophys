@@ -45,6 +45,14 @@ idling is off so playback and iterative fits run at full rate; otherwise the win
 - Traces: `sim.make_trace` once per parameter change; the parts switch on and off without resimulating
   (`Trace.on`). dF/F uses F0 = the 20th percentile of what was recorded, over the whole recording or a running
   window.
+- Signal quality (`quality/model.py`): `sim.make_trace` once per indicator, sample rate and spike rate (cached), then
+  photons counted at any brightness without resimulating: Poisson(phi0 / fs x (1 + dF/F) x (1 + motion)), back to
+  dF/F with F0 known, then an optional zero-phase low-pass. nu is Rupprecht et al. 2021's; d' is the mean output at
+  isolated spikes of a matched filter (the mean isolated spike in the truth), z-scored on samples no spike reaches.
+  Welch spectra in numpy. Brightness sweeps every indicator at 26 photon rates, 4 recordings each, recomputed when
+  the motion or low-pass changes. Lag-1 autocorrelation: a 20 x 20 movie of four cells (one bright and silent), each
+  its own `sim.make_trace` (cached, at most 2000 frames), recounted per pixel with the trace; r1 per pixel, and the
+  share of each pixel's variance that is not shot noise, known in simulation.
 - SVD (under Other, `svd/model.py`): `Peel` finds the pieces one at a time by power iteration and deflation (u = R v,
   v = R' u until v settles, then subtract s u v'), one half-step per click; its pieces equal `np.linalg.svd`'s
   (tested). Signs are fixed so each U column's largest entry is positive.

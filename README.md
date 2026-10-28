@@ -40,6 +40,7 @@ The only dependencies are `imgui-bundle` and `numpy` (which ImPlot's Python API 
 | `motion` | Motion correction | registration; rigid registration; non-rigid (piecewise rigid) registration; reference image |
 | `nmf` | Demixing (NMF) | the movie as a matrix; footprints and traces; HALS updates; NMF vs PCA |
 | `traces` | Traces | indicator response; dF/F; neuropil, bleaching and noise; temporal smoothing |
+| `quality` | Signal quality | brightness; noise level nu; spike detectability d'; noise spectrum; lag-1 autocorrelation |
 | `svd` | SVD (under Other) | rank-1 matrices; power iteration and deflation; truncated SVD |
 
 Each page lists its references at the bottom.
@@ -47,6 +48,12 @@ Each page lists its references at the bottom.
 ![HALS](docs/nmf.png)
 
 ![dF/F](docs/traces.png)
+
+![Spike detectability d': the trace and its neuron; one spike's shape slides along the trace; the match jitters where there is no spike and jumps at one; d' is the jump in SDs; a threshold rises while hits and false alarms update](docs/quality.gif)
+
+The Signal quality animation walks through d' on an AOD voltage recording (an ASAP7 chessboard patch, with 20% spikes added at known times because its own are too rare to teach from). It is drawn by [imgui_masknmf_manim](https://github.com/FlynnOConnell/imgui_masknmf_manim)'s manim canvas: `scripts/quality_gif.py`, run in that repo's venv. The same walkthrough on a dendrite (an ASAP7 ribbon at 337 frames / s, D 2.4) shows what a low d' looks like: the match barely rises at a spike, and a 4 SD threshold catches almost none of them.
+
+![Spike detectability d' on a dendrite: the same walkthrough, d' = 2, spikes lost in noise](docs/quality_dendrite.gif)
 
 ## Text size
 

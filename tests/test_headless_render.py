@@ -53,7 +53,7 @@ def test_every_stage_and_subsection_renders():
         for j in range(len(lesson.outline())):
             steps.append(lambda a, j=j: setattr(a.lesson, "jump", j))
     run_frames(app, steps)
-    assert [x.key for x in app.lessons] == ["motion", "nmf", "traces", "svd"]
+    assert [x.key for x in app.lessons] == ["motion", "nmf", "traces", "quality", "svd"]
 
 
 def test_nmf_every_method_and_view_renders():
@@ -87,3 +87,19 @@ def test_traces_every_indicator_part_and_denoiser_renders():
         steps.append(lambda a, m=method: (setattr(a.lesson, "method", m), a.lesson.refilter()))
     run_frames(app, steps)
     assert not any(app.lesson.trace.on.values())
+
+
+def test_quality_every_indicator_and_option_renders():
+    from imgui_ophys import sim
+
+    app = App(lesson="quality")
+    steps = []
+    for ind in sim.INDICATORS:
+        steps.append(lambda a, i=ind: (setattr(a.lesson, "indicator", i.name), setattr(a.lesson, "fs", i.fs), a.lesson.make()))
+    for phi0 in (1e3, 1e8):
+        steps.append(lambda a, p=phi0: (setattr(a.lesson, "phi0", p), a.lesson.recount()))
+    steps.append(lambda a: (setattr(a.lesson, "artifact", 5.0), setattr(a.lesson, "filtered", True), a.lesson.recount(), a.lesson.resweep()))
+    steps.append(lambda a: (setattr(a.lesson, "rate", 20.0), a.lesson.make()))
+    run_frames(app, steps)
+    lesson = app.lesson
+    assert lesson.indicator == "JEDI-2P" and set(lesson.sweeps) == {i.name for i in sim.INDICATORS}
