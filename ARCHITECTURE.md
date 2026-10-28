@@ -67,3 +67,12 @@ idling is off so playback and iterative fits run at full rate; otherwise the win
   Colormaps are made on a stage's first `page()`, because they need an ImPlot context.
 - Headless tests run on hello_imgui's null backend, which needs `renderer_has_textures` set in `post_init`.
 - `DebugTools.debugger` is a method, not a property.
+
+## Stories
+
+`stories/` holds one manim script per page plus `storykit.py`. They are not part of the package: each is a PEP 723
+script (`uv run -p 3.12 stories/nmf_story.py --out <dir>`) that imports the lesson's `model.py` through
+`storykit.lesson_model`, which stands in empty modules for the lesson packages so their `__init__` files (which
+import imgui_bundle) never run. A story is a `build()` returning nested AnimationGroups; `storykit.story` begins
+every leaf in time order and `set_story(t)` scrubs to any second, so the same build gives the stills, the mp4 and
+the gif. `Count` makes a number react to a morph, `Play` and `Recolor` step an image or a grid through frames.

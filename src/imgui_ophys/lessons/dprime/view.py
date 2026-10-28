@@ -26,6 +26,7 @@ BEFORE = P.ACCENT  # the frames just before a spike
 PEAK = KEY  # the frames at the response peak
 FRAMES = 6  # frames in each window, the jGCaMP8 paper's six
 F0_WINDOW = 5.0  # s, the running 20th-percentile baseline
+MORPH = 1.2  # s a parameter change takes to play out: the trace morphs into the new one and d' counts along
 TARGETS = (0.5, 1.0, 2.0, 3.0, 4.0)  # the examples: white noise added to a clean cell until d' lands here
 # brightness, bleach, F0: the cells the story shows; the plot ranges are fixed over them so a change is seen as motion
 REFERENCE = ((20.0, 0.2, "running window"), (4.0, 0.2, "running window"), (100.0, 0.2, "running window"), (100.0, 0.35, "whole recording"))
@@ -116,6 +117,8 @@ class DprimeLesson(Lesson):
         self.params = sim.TraceParams(duration=40.0, seed=3)
         self.f0 = "running window"
         self.chosen_time = math.nan  # s, the spike the zoom follows
+        self.dff = None
+        self.morph = MORPH  # s into the current morph
         self.reseed()
 
     @property
@@ -153,15 +156,44 @@ class DprimeLesson(Lesson):
         dff_clean = to_dff(sim.make_trace(clean).recorded, p.fs, "running window")
         reachable = tuple(d for d in TARGETS if d < 0.98 * self.rescore(dff_clean, spikes).d)
         self.examples = M.noise_rows(dff_clean, spikes, p.fs, self.peak, FRAMES, self.quiet, reachable)
+        self.dff = None
         self.make()
 
     def make(self) -> None:
+        """Re-simulate and start the morph from what is on screen to the new trace; a new spike train snaps."""
         p = self.params
         self.trace = sim.make_trace(p)
-        self.dff = to_dff(self.trace.recorded, p.fs, self.f0)
+        self.dff_to = to_dff(self.trace.recorded, p.fs, self.f0)
+        target = self.rescore(self.dff_to, self.trace.spikes)
+        self.d_to = target.d
+        self.chosen = int(np.argmin(np.abs(target.spikes - self.chosen_time))) if target.n else None
+        if self.dff is None:
+            self.dff_from, self.d_from = self.dff_to, self.d_to
+            self.settle()
+            return
+        self.dff_from, self.d_from = self.dff, self.score.d
+        self.morph = 0.0
+        self.show(0.0)
+
+    def show(self, u: float) -> None:
+        """Put the trace u of the way (0 to 1) from the old to the new on screen, with d' counting linearly between the two."""
+        b = u * u * (3 - 2 * u)
+        self.dff = (1 - b) * self.dff_from + b * self.dff_to
         self.score = self.rescore(self.dff, self.trace.spikes)
-        s = self.score
-        self.chosen = int(np.argmin(np.abs(s.spikes - self.chosen_time))) if s.n else None
+        self.score.d = (1 - b) * self.d_from + b * self.d_to
+
+    def settle(self) -> None:
+        """Finish the morph now."""
+        self.morph = MORPH
+        self.show(1.0)
+
+    def update(self, dt: float) -> None:
+        if self.morph < MORPH:
+            self.morph = min(MORPH, self.morph + dt)
+            self.show(self.morph / MORPH)
+
+    def animating(self) -> bool:
+        return self.morph < MORPH
 
     def zoom_bounds(self) -> tuple[int, int, int]:
         """(first frame, last frame + 1, spike frame) of the window around the followed spike."""

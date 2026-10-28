@@ -45,6 +45,28 @@ The only dependencies are `imgui-bundle` and `numpy` (which ImPlot's Python API 
 
 Each page lists its references at the bottom.
 
+## Stories
+
+One animation per page, built from the same models (`stories/`): chapters that add one idea at a time, numbers
+from the data, no axes where a scale bar will do.
+
+![Motion correction](docs/stories/motion.gif)
+
+![Demixing](docs/stories/nmf.gif)
+
+![Traces](docs/stories/traces.gif)
+
+![Signal quality](docs/stories/dprime.gif)
+
+![SVD](docs/stories/svd.gif)
+
+Rebuild one with `uv run -p 3.12 stories/<page>_story.py --out <dir>`: the scripts declare their own dependencies
+(manim, numpy, pillow) and read the pure-numpy models straight from `src/`, so nothing is added to the app's
+environment. Each writes an mp4, a gif and a PNG per chapter; `storykit.py` is what they share (manim through a
+Cairo camera, no Scene, chapters scrubbed to any time). The gifs here are 720 px at 10 fps; ffmpeg must be on PATH.
+
+## Screenshots
+
 ![HALS](docs/nmf.png)
 
 ![dF/F](docs/traces.png)
