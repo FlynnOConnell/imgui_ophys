@@ -1,9 +1,9 @@
 """
-What the lesson stories share: manim as a drawing engine without a Scene (a Cairo camera, frames piped to ffmpeg),
+What the lesson animations share: manim as a drawing engine without a Scene (a Cairo camera, frames piped to ffmpeg),
 chapters played one after the other and scrubbed to any time, text, axes, scale bars, images and small grids, and
 the command line that renders stills, an mp4 and a gif.
 
-A story is a `build()` that returns a Story: nested AnimationGroups, every mobject introduced by an animation (a
+An animation is a `build()` that returns a Timeline: nested AnimationGroups, every mobject introduced by an animation (a
 mobject only ever moved by a Transform is drawn from t = 0, so such sources start at opacity 0).
 """
 
@@ -258,7 +258,7 @@ def leaf_timings(animation: mn.Animation, start: float = 0.0, scale: float = 1.0
 
 
 @dataclass
-class Story:
+class Timeline:
     statics: list
     animation: mn.AnimationGroup
     duration: float
@@ -268,7 +268,7 @@ class Story:
     alphas: np.ndarray
 
 
-def story(statics: list, chapters: list) -> Story:
+def timeline(statics: list, chapters: list) -> Timeline:
     """Chapters played one after the other, every leaf begun in time order (as a Scene would) and rewound to 0."""
     animation = mn.AnimationGroup(*chapters, lag_ratio=1.0)
     timings = leaf_timings(animation)
@@ -278,12 +278,12 @@ def story(statics: list, chapters: list) -> Story:
         leaf.interpolate(1)
     for leaf in reversed(leaves):
         leaf.interpolate(0)
-    return Story(list(statics), animation, float(animation.run_time), leaves,
+    return Timeline(list(statics), animation, float(animation.run_time), leaves,
                  np.array([s for s, _, _ in timings]), np.array([e for _, e, _ in timings]), np.zeros(len(leaves)))
 
 
-def set_story(s: Story, t: float) -> list:
-    """Put the story at t seconds; returns the mobjects to draw, bottom first."""
+def seek(s: Timeline, t: float) -> list:
+    """Put the animation at t seconds; returns the mobjects to draw, bottom first."""
     alphas = np.clip((t - s.starts) / np.maximum(s.ends - s.starts, 1e-9), 0.0, 1.0)
     changed = np.flatnonzero(alphas != s.alphas)
     for i in changed[::-1]:
@@ -332,21 +332,21 @@ def slug(name: str) -> str:
     return "".join(ch if ch.isalnum() else "-" for ch in name.lower()).strip("-").replace("--", "-")
 
 
-def stills(s: Story, camera: mn.Camera, dir_out: Path, chapters: tuple, untitled: dict) -> list:
+def stills(s: Timeline, camera: mn.Camera, dir_out: Path, chapters: tuple, untitled: dict) -> list:
     """A PNG at the end of each chapter (its hold), named by its title or, without one, by untitled[k]."""
     for old in dir_out.glob("[0-9]*_*.png"):
         old.unlink()
     ends = np.cumsum([d for _, d in chapters])
     out = []
     for k, ((name, _), end) in enumerate(zip(chapters, ends)):
-        rgb = capture(camera, set_story(s, float(end) - 0.05))[..., :3]
+        rgb = capture(camera, seek(s, float(end) - 0.05))[..., :3]
         filepath = dir_out / f"{k + 1}_{slug(name) or untitled[k]}.png"
         Image.fromarray(rgb).save(filepath)
         out.append(filepath)
     return out
 
 
-def movie(s: Story, camera: mn.Camera, filepath_mp4: Path, filepath_gif: Path, gif_width: int = 960, gif_fps: int = 12, hold: float = 2.0) -> int:
+def movie(s: Timeline, camera: mn.Camera, filepath_mp4: Path, filepath_gif: Path, gif_width: int = 960, gif_fps: int = 12, hold: float = 2.0) -> int:
     """Every frame at FPS through ffmpeg: an h264 mp4, then a palette gif from the same frames."""
     width, height = camera.pixel_width, camera.pixel_height
     n = int(round((s.duration + hold) * FPS))
@@ -356,7 +356,7 @@ def movie(s: Story, camera: mn.Camera, filepath_mp4: Path, filepath_gif: Path, g
         stdin=subprocess.PIPE,
     )
     for i in range(n):
-        rgb = capture(camera, set_story(s, min(i / FPS, s.duration)))[..., :3]
+        rgb = capture(camera, seek(s, min(i / FPS, s.duration)))[..., :3]
         ffmpeg.stdin.write(np.ascontiguousarray(rgb).tobytes())
     ffmpeg.stdin.close()
     if ffmpeg.wait() != 0:
@@ -366,8 +366,8 @@ def movie(s: Story, camera: mn.Camera, filepath_mp4: Path, filepath_gif: Path, g
     return n
 
 
-def run(name: str, chapters: tuple, untitled: dict, build: Callable[[], Story], doc: str) -> None:
-    """The command line every story shares: --out, --width, --gif-width, --stills-only."""
+def run(name: str, chapters: tuple, untitled: dict, build: Callable[[], Timeline], doc: str) -> None:
+    """The command line every animation shares: --out, --width, --gif-width, --stills-only."""
     parser = argparse.ArgumentParser(description=doc.strip().splitlines()[0])
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--width", type=int, default=1280)
@@ -385,5 +385,5 @@ def run(name: str, chapters: tuple, untitled: dict, build: Callable[[], Story], 
         return
     filepath_mp4, filepath_gif = args.out / f"{name}.mp4", args.out / f"{name}.gif"
     n = movie(s, camera, filepath_mp4, filepath_gif, gif_width=args.gif_width)
-    print(f"{filepath_mp4}: {n} frames at {FPS} fps, {s.duration:.0f} s of story")
+    print(f"{filepath_mp4}: {n} frames at {FPS} fps, {s.duration:.0f} s of animation")
     print(f"{filepath_gif}: {filepath_gif.stat().st_size / 1e6:.1f} MB")

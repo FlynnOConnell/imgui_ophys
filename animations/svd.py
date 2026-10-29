@@ -3,18 +3,18 @@
 # dependencies = ["manim>=0.22", "numpy", "pillow<13"]
 # ///
 """
-SVD as one story: a small image, one rank-1 piece of it as a column times a row, power iteration finding that
+SVD as one animation: a small image, one rank-1 piece of it as a column times a row, power iteration finding that
 piece, deflation finding the rest, and a larger image rebuilt from its first k pieces. Built from imgui_ophys's SVD
-model; drawn with storykit.
+model; drawn with kit.py.
 
-    uv run -p 3.12 stories/svd_story.py --out <dir> [--stills-only] [--gif-width 720]
+    uv run -p 3.12 animations/svd.py --out <dir> [--stills-only] [--gif-width 720]
 """
 
 import manim as mn
 import numpy as np
 
-import storykit as kit
-from storykit import ACCENT, DIM, KEY, PARTS, TEXT, TRACE, Count, Recolor, at, chapter, color, diverging_rgb, gray_rgb, grid, image, label, put, replace, story
+import kit
+from kit import ACCENT, DIM, KEY, PARTS, TEXT, TRACE, Count, Recolor, at, chapter, color, diverging_rgb, gray_rgb, grid, image, label, put, replace, timeline
 
 M = kit.lesson_model("svd")
 
@@ -44,7 +44,7 @@ def piece_grid(piece: np.ndarray, m: float, c: tuple, cell: float, x: float, y: 
     return grid(diverging_rgb(piece, m, c), cell, x, y)
 
 
-def build() -> kit.Story:
+def build() -> kit.Timeline:
     Y = M.small_image()
     n = Y.shape[0]
     small = M.svd(Y)
@@ -178,7 +178,7 @@ def build() -> kit.Story:
                                     for i in range(1, len(RANKS))], lag_ratio=1.0), lag_ratio=1.0),
     ]
     print(f"s {small.S[:4].round(2)}; power iteration {iterations} iterations; left after pieces {np.round(left, 1)}; big image left out {np.round(errors, 1)}")
-    return story([], chapters)
+    return timeline([], chapters)
 
 
 if __name__ == "__main__":

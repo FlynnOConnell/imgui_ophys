@@ -3,18 +3,18 @@
 # dependencies = ["manim>=0.22", "numpy", "pillow<13"]
 # ///
 """
-Demixing as one story: a 6 x 6, 24 frame movie, each frame unrolled into a column of Y, Y as footprints times
+Demixing as one animation: a 6 x 6, 24 frame movie, each frame unrolled into a column of Y, Y as footprints times
 traces, and HALS fitting them from a random start one sweep at a time. Built from imgui_ophys's NMF model (the
-guide's tiny movie); drawn with storykit.
+guide's tiny movie); drawn with kit.py.
 
-    uv run -p 3.12 stories/nmf_story.py --out <dir> [--stills-only] [--gif-width 720]
+    uv run -p 3.12 animations/nmf.py --out <dir> [--stills-only] [--gif-width 720]
 """
 
 import manim as mn
 import numpy as np
 
-import storykit as kit
-from storykit import DIM, KEY, PARTS, TEXT, TRACE, Count, Recolor, at, axes_points, chapter, color, gray_rgb, grid, label, path, plain_axes, put, replace, story, tinted_rgb
+import kit
+from kit import DIM, KEY, PARTS, TEXT, TRACE, Count, Recolor, at, axes_points, chapter, color, gray_rgb, grid, label, path, plain_axes, put, replace, timeline, tinted_rgb
 
 M = kit.lesson_model("nmf")
 
@@ -53,7 +53,7 @@ def trace(values: np.ndarray, hi: float, c: tuple, x: float, y: float, width: fl
     return path(axes, np.arange(values.size), values, c, 2.0, 0, hi)
 
 
-def build() -> kit.Story:
+def build() -> kit.Timeline:
     movie = M.make_tiny()
     Y = movie.Y.astype(float)
     side, T = movie.side, movie.frames
@@ -153,7 +153,7 @@ def build() -> kit.Story:
                 mn.AnimationGroup(mn.FadeIn(row_names), *[mn.FadeIn(f) for f in true_footprints], *[mn.Create(t) for t in true_traces], run_time=1.5), lag_ratio=1.0),
     ]
     print(f"errors per sweep {np.round(errors, 1)}; noise alone {truth_error:.1f}%; parts matched to truth as {perm}")
-    return story([], chapters)
+    return timeline([], chapters)
 
 
 if __name__ == "__main__":

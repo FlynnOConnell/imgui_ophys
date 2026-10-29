@@ -3,11 +3,11 @@
 # dependencies = ["manim>=0.22", "numpy", "pillow<13"]
 # ///
 """
-d' as one story: a trace, one spike, its two windows clustered, the number, then the picture morphing as noise and
+d' as one animation: a trace, one spike, its two windows clustered, the number, then the picture morphing as noise and
 photobleaching come and go, and a table of examples. Built from imgui_ophys's trace simulator with the spike times
-known; drawn with storykit (manim through a Cairo camera, no Scene).
+known; drawn with kit.py (manim through a Cairo camera, no Scene).
 
-    uv run -p 3.12 stories/dprime_story.py --out <dir> [--stills-only] [--gif-width 720]
+    uv run -p 3.12 animations/dprime.py --out <dir> [--stills-only] [--gif-width 720]
 
 Text only, no LaTeX. Needs ffmpeg on PATH.
 """
@@ -17,9 +17,9 @@ from dataclasses import dataclass
 import manim as mn
 import numpy as np
 
-import storykit as kit
-from storykit import (ACCENT, DIM, KEY, TEXT, TRACE, TRUTH, Count, axes_points, caption, chapter, color, dots_at, label, path,
-                      plain_axes, put, replace, scale_bars, story)
+import kit
+from kit import (ACCENT, DIM, KEY, TEXT, TRACE, TRUTH, Count, axes_points, caption, chapter, color, dots_at, label, path,
+                 plain_axes, put, replace, scale_bars, timeline)
 
 M = kit.lesson_model("dprime")
 from imgui_ophys import sim  # noqa: E402
@@ -42,7 +42,7 @@ CHAPTERS = (
     ("", 12.0),
 )
 UNTITLED = {0: "the-trace", 1: "one-spike", 2: "two-clusters", 3: "every-spike", 4: "the-number", 8: "examples"}  # still file names of the chapters without a title
-# the cells the story morphs between, in order: (name, brightness in photons / pixel / frame, bleach fraction, F0)
+# the cells the animation morphs between, in order: (name, brightness in photons / pixel / frame, bleach fraction, F0)
 CELLS = (
     ("base", 20.0, 0.2, "running window"),
     ("noisy", 4.0, 0.2, "running window"),
@@ -81,7 +81,7 @@ def rescore(cell: Cell, dff: np.ndarray) -> M.Score:
 
 
 def simulate(name: str, brightness: float, bleach: float, f0: str, neuropil: float = 0.3, read_noise: float = 1.5) -> Cell:
-    """The story's cell (seed fixed, so the spikes are the same) at this brightness and bleaching, scored on its dF/F."""
+    """The animation's cell (seed fixed, so the spikes are the same) at this brightness and bleaching, scored on its dF/F."""
     p = sim.TraceParams(duration=40.0, brightness=brightness, bleach=bleach, seed=3, neuropil=neuropil, read_noise=read_noise)
     tr = sim.make_trace(p)
     f = tr.recorded
@@ -159,7 +159,7 @@ def example_rows(examples: list, t: np.ndarray, y_top: float, pitch: float) -> l
 
 
 def build() -> tuple:
-    """The story and its cells."""
+    """The animation and its cells."""
     cells = {name: simulate(name, brightness, bleach, f0) for name, brightness, bleach, f0 in CELLS}
     base = cells["base"]
     fs = 1.0 / (base.t[1] - base.t[0])
@@ -321,7 +321,7 @@ def build() -> tuple:
                 lag_ratio=1.0),
     ]
     cells["clean"] = clean
-    return story([], chapters), cells
+    return timeline([], chapters), cells
 
 
 # ----------------------------------------------------------------------
@@ -331,7 +331,7 @@ def build() -> tuple:
 
 
 
-def build_story() -> kit.Story:
+def build_timeline() -> kit.Timeline:
     s, cells = build()
     for c in cells.values():
         print(f"{c.name:9s}: d' = {c.score.d:.2f} over {c.score.n} spikes, accuracy {100 * M.accuracy(c.score.d):.0f}%")
@@ -339,4 +339,4 @@ def build_story() -> kit.Story:
 
 
 if __name__ == "__main__":
-    kit.run("dprime", CHAPTERS, UNTITLED, build_story, __doc__)
+    kit.run("dprime", CHAPTERS, UNTITLED, build_timeline, __doc__)

@@ -3,18 +3,18 @@
 # dependencies = ["manim>=0.22", "numpy", "pillow<13"]
 # ///
 """
-Motion correction as one story: a field of cells that moves, the reference image, the correlation that finds each
+Motion correction as one animation: a field of cells that moves, the reference image, the correlation that finds each
 frame's shift, every frame moved back, patches for a field that bends, and how a reference is built. Built from
-imgui_ophys's motion model (32 x 32 pixels, 60 frames); drawn with storykit.
+imgui_ophys's motion model (32 x 32 pixels, 60 frames); drawn with kit.py.
 
-    uv run -p 3.12 stories/motion_story.py --out <dir> [--stills-only] [--gif-width 720]
+    uv run -p 3.12 animations/motion.py --out <dir> [--stills-only] [--gif-width 720]
 """
 
 import manim as mn
 import numpy as np
 
-import storykit as kit
-from storykit import ACCENT, DIM, HIGHLIGHT, KEY, TEXT, TRACE, Play, at, axes_points, chapter, color, diverging_rgb, gray_rgb, hbar, image, label, path, plain_axes, put, replace, story, tinted_rgb, vbar
+import kit
+from kit import ACCENT, DIM, HIGHLIGHT, KEY, TEXT, TRACE, Play, at, axes_points, chapter, color, diverging_rgb, gray_rgb, hbar, image, label, path, plain_axes, put, replace, timeline, tinted_rgb, vbar
 
 M = kit.lesson_model("motion")
 
@@ -55,7 +55,7 @@ def under(img: mn.Mobject, text: str, c: tuple = DIM) -> mn.Text:
     return label(text, c, 18).next_to(img, mn.DOWN, buff=0.12)
 
 
-def build() -> kit.Story:
+def build() -> kit.Timeline:
     ref = M.field()
     rigid_motion = M.make_motion(FRAMES, bend=0.0)
     bent_motion = M.make_motion(FRAMES, bend=BEND)
@@ -176,7 +176,7 @@ def build() -> kit.Story:
     print(f"frame {t_star}: shift {found[t_star].round(2)} found, {true[t_star].round(2)} true; rigid error {error:.3f} px; bending frame {t_bend}: "
           f"mismatch {[round(M.mismatch(img, ref), 3) for img in (bent_motion.frames[t_bend], bent_rigid[t_bend], bent_patched[t_bend])]}; "
           f"crispness {[round(M.crispness(img), 2) for img in built]}")
-    return story([], chapters)
+    return timeline([], chapters)
 
 
 if __name__ == "__main__":

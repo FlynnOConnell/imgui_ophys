@@ -3,11 +3,11 @@
 # dependencies = ["manim>=0.22", "numpy", "pillow<13"]
 # ///
 """
-Traces as one story: one spike through the indicator, the camera and the photon count; the whole recording and its
+Traces as one animation: one spike through the indicator, the camera and the photon count; the whole recording and its
 dF/F; the recording as a sum of parts, taken away one at a time; and smoothing. Built from imgui_ophys's trace
-simulator (GCaMP6f, 30 Hz); drawn with storykit.
+simulator (GCaMP6f, 30 Hz); drawn with kit.py.
 
-    uv run -p 3.12 stories/traces_story.py --out <dir> [--stills-only] [--gif-width 720]
+    uv run -p 3.12 animations/traces.py --out <dir> [--stills-only] [--gif-width 720]
 """
 
 import sys
@@ -16,8 +16,8 @@ from pathlib import Path
 import manim as mn
 import numpy as np
 
-import storykit as kit
-from storykit import ACCENT, DIM, KEY, TEXT, TRACE, TRUTH, Count, at, axes_points, chapter, color, hbar, label, path, plain_axes, put, replace, story, vbar
+import kit
+from kit import ACCENT, DIM, KEY, TEXT, TRACE, TRUTH, Count, at, axes_points, chapter, color, hbar, label, path, plain_axes, put, replace, timeline, vbar
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from imgui_ophys import sim  # noqa: E402
@@ -77,7 +77,7 @@ def noise_label(x: float) -> mn.Text:
     return label(f"noise SD {x:.3f}", ACCENT, 26)
 
 
-def build() -> kit.Story:
+def build() -> kit.Timeline:
     p = sim.TraceParams(duration=30.0)
     tr = sim.make_trace(p)
     fs = p.fs
@@ -223,7 +223,7 @@ def build() -> kit.Story:
                                               Count(peak_text, kept[SIGMAS[1]], kept[SIGMAS[2]], percent_label, 0),
                                               Count(noise_text, noise[SIGMAS[1]], noise[SIGMAS[2]], noise_label, 3), run_time=3.0), lag_ratio=1.0))
     print(f"spike at {first:.2f} s; F0 {f0:.0f} photons; peak kept {kept}; noise {noise}")
-    return story([], chapters)
+    return timeline([], chapters)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,8 @@
 # imgui_ophys
 
-Interactive [imgui-bundle](https://github.com/pthom/imgui_bundle) pages that explain parts of an optical physiology
-pipeline with figures, on synthetic data with a known ground truth.
+Interactive [imgui-bundle](https://github.com/pthom/imgui_bundle) pages, one per step of an optical physiology
+pipeline, on synthetic data with a known ground truth. Each page builds its idea up in a few sections; the number on
+screen reacts as the picture changes.
 
 ![Motion correction](docs/motion.png)
 
@@ -45,24 +46,25 @@ The only dependencies are `imgui-bundle` and `numpy` (which ImPlot's Python API 
 
 Each page lists its references at the bottom.
 
-## Stories
+## Animations
 
-One animation per page, built from the same models (`stories/`): chapters that add one idea at a time, numbers
-from the data, no axes where a scale bar will do.
+One animation per page, built from the same models (`animations/`). Each chapter adds one idea. Titles name the
+content ("Add noise", "Truncated SVD") or are absent, traces carry scale bars instead of axes, labels state the thing
+and its provenance ("Ground truth spikes (simulated)"), and a number counts along as the picture morphs.
 
-![Motion correction](docs/stories/motion.gif)
+![Motion correction](docs/animations/motion.gif)
 
-![Demixing](docs/stories/nmf.gif)
+![Demixing](docs/animations/nmf.gif)
 
-![Traces](docs/stories/traces.gif)
+![Traces](docs/animations/traces.gif)
 
-![Signal quality](docs/stories/dprime.gif)
+![Signal quality](docs/animations/dprime.gif)
 
-![SVD](docs/stories/svd.gif)
+![SVD](docs/animations/svd.gif)
 
-Rebuild one with `uv run -p 3.12 stories/<page>_story.py --out <dir>`: the scripts declare their own dependencies
+Rebuild one with `uv run -p 3.12 animations/<page>.py --out <dir>`: the scripts declare their own dependencies
 (manim, numpy, pillow) and read the pure-numpy models straight from `src/`, so nothing is added to the app's
-environment. Each writes an mp4, a gif and a PNG per chapter; `storykit.py` is what they share (manim through a
+environment. Each writes an mp4, a gif and a PNG per chapter; `kit.py` is what they share (manim through a
 Cairo camera, no Scene, chapters scrubbed to any time). The gifs here are 720 px at 10 fps; ffmpeg must be on PATH.
 
 ## Screenshots
@@ -92,8 +94,11 @@ Log and ID Stack are imgui's own tools.
 
 1. `src/imgui_ophys/lessons/<name>/model.py`: the numbers, no imgui (or use `sim.py`). Test it in `tests/`.
 2. `src/imgui_ophys/lessons/<name>/view.py`: a `Lesson` subclass with `key`, `title`, `summary`, `sections` (icon,
-   title per subsection) and `section_<i>()` for each, plus `controls()` for the rail. Figures from `diagram.py`,
-   one-line captions, detail in tables and tooltips.
+   title per subsection) and `section_<i>()` for each, plus `controls()` for the rail. The summary is the quantity's
+   definition in one line ("a measure of how well spikes stand out from noise"); section titles name the content, never the
+   question ("Clusters", not "What d' says"). Figures from `diagram.py` and `plotting.py`: scale bars rather than
+   axes, labels with provenance, no caption that restates the title, no formula prose beside a number. A parameter
+   change morphs the picture and the number follows it (`update(dt)`, `animating()`), as in `dprime/view.py`.
 3. `__init__.py` exporting the class and `__main__.py` calling `run(["--app", "<key>"])`.
 4. Add the class to `LESSONS` in `src/imgui_ophys/lessons/__init__.py`. `tests/test_headless_render.py` draws every
    subsection of every page.
