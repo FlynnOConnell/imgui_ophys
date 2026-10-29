@@ -1,7 +1,7 @@
 """
 What the lesson animations share: manim as a drawing engine without a Scene (a Cairo camera, frames piped to ffmpeg),
 chapters played one after the other and scrubbed to any time, text, axes, scale bars, images and small grids, and
-the command line that renders stills, an mp4 and a gif.
+the command line that renders stills, an mp4 and a gif, with a spoken line per chapter if the animation has one.
 
 An animation is a `build()` that returns a Timeline: nested AnimationGroups, every mobject introduced by an animation (a
 mobject only ever moved by a Transform is drawn from t = 0, so such sources start at opacity 0).
@@ -9,10 +9,12 @@ mobject only ever moved by a Transform is drawn from t = 0, so such sources star
 
 import argparse
 import importlib
+import json
 import subprocess
 import sys
 import textwrap
 import types
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
@@ -332,13 +334,12 @@ def slug(name: str) -> str:
     return "".join(ch if ch.isalnum() else "-" for ch in name.lower()).strip("-").replace("--", "-")
 
 
-def stills(s: Timeline, camera: mn.Camera, dir_out: Path, chapters: tuple, untitled: dict) -> list:
+def stills(s: Timeline, camera: mn.Camera, dir_out: Path, names: list, seconds: list, untitled: dict) -> list:
     """A PNG at the end of each chapter (its hold), named by its title or, without one, by untitled[k]."""
     for old in dir_out.glob("[0-9]*_*.png"):
         old.unlink()
-    ends = np.cumsum([d for _, d in chapters])
     out = []
-    for k, ((name, _), end) in enumerate(zip(chapters, ends)):
+    for k, (name, end) in enumerate(zip(names, np.cumsum(seconds))):
         rgb = capture(camera, seek(s, float(end) - 0.05))[..., :3]
         filepath = dir_out / f"{k + 1}_{slug(name) or untitled[k]}.png"
         Image.fromarray(rgb).save(filepath)
@@ -366,24 +367,121 @@ def movie(s: Timeline, camera: mn.Camera, filepath_mp4: Path, filepath_gif: Path
     return n
 
 
-def run(name: str, chapters: tuple, untitled: dict, build: Callable[[], Timeline], doc: str) -> None:
-    """The command line every animation shares: --out, --width, --gif-width, --stills-only."""
+# ----------------------------------------------------------------------
+# narration: one spoken line per chapter, the chapter as long as the line needs
+# ----------------------------------------------------------------------
+
+LEAD = 0.4  # s into a chapter before its line is spoken
+TAIL = 0.8  # s of silence after a line before the next chapter
+SAMPLE_RATE = 24000
+SPOKEN = (("d'", "d prime"), ("dF/F", "delta F over F"), ("(blue)", "in blue"), ("(yellow)", "in yellow"), ("+/-", "plus or minus"), (" x ", " by "))
+
+
+def spoken(text: str) -> str:
+    """A caption as the voice should read it."""
+    for written, said in SPOKEN:
+        text = text.replace(written, said)
+    return text
+
+
+def narrate(lines: list, dir_out: Path, voice: str) -> list:
+    """Speak the lines through animations/narrate.py in its own uv environment; (text, seconds, filepath) per line."""
+    dir_tts = dir_out / "tts"
+    dir_tts.mkdir(parents=True, exist_ok=True)
+    filepath_lines = dir_tts / "lines.json"
+    filepath_lines.write_text(json.dumps([spoken(line) for line in lines]))
+    subprocess.run(["uv", "run", "-p", "3.12", str(Path(__file__).with_name("narrate.py")), "--lines", str(filepath_lines),
+                    "--out", str(dir_tts), "--voice", voice], check=True)
+    return json.loads((dir_tts / "clips.json").read_text())
+
+
+def chapter_seconds(minimums: list, clips: list) -> list:
+    """Each chapter at least its hand-set length, and long enough for its line plus the lead and tail."""
+    return [max(float(d), clip["seconds"] + LEAD + TAIL) for d, clip in zip(minimums, clips)]
+
+
+def soundtrack(clips: list, starts: np.ndarray, duration: float, filepath_wav: Path) -> None:
+    """The clips placed at their starts in duration seconds of silence, as 16-bit mono wav."""
+    audio = np.zeros(int(round(duration * SAMPLE_RATE)), np.float32)
+    for clip, start in zip(clips, starts):
+        clip_audio = wav_samples(Path(clip["filepath"]))
+        i = int(round(start * SAMPLE_RATE))
+        audio[i:i + clip_audio.size] += clip_audio[:audio.size - i]
+    pcm = (np.clip(audio, -1, 1) * 32767).astype("<i2")
+    with wave.open(str(filepath_wav), "wb") as f:
+        f.setnchannels(1)
+        f.setsampwidth(2)
+        f.setframerate(SAMPLE_RATE)
+        f.writeframes(pcm.tobytes())
+
+
+def wav_samples(filepath: Path) -> np.ndarray:
+    """A 16-bit mono wav's samples in [-1, 1]; a float wav is read through ffmpeg."""
+    raw = subprocess.run(["ffmpeg", "-loglevel", "error", "-i", str(filepath), "-f", "s16le", "-ac", "1", "-ar", str(SAMPLE_RATE), "-"],
+                         check=True, capture_output=True).stdout
+    return np.frombuffer(raw, "<i2").astype(np.float32) / 32767
+
+
+def srt_time(t: float) -> str:
+    ms = int(round(t * 1000))
+    return f"{ms // 3600000:02d}:{ms // 60000 % 60:02d}:{ms // 1000 % 60:02d},{ms % 1000:03d}"
+
+
+def subtitles(lines: list, clips: list, starts: np.ndarray, filepath_srt: Path) -> None:
+    """One cue per chapter while its line is spoken, in the written form."""
+    cues = [f"{k + 1}\n{srt_time(start)} --> {srt_time(start + clip['seconds'])}\n{line}\n"
+            for k, (line, clip, start) in enumerate(zip(lines, clips, starts))]
+    filepath_srt.write_text("\n".join(cues))
+
+
+def mux(filepath_video: Path, filepath_wav: Path, filepath_srt: Path, filepath_out: Path) -> None:
+    """The silent mp4 with the voice as aac and the subtitles as a selectable track."""
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", str(filepath_video), "-i", str(filepath_wav), "-i", str(filepath_srt),
+                    "-map", "0:v:0", "-map", "1:a:0", "-map", "2:s:0", "-c:v", "copy", "-c:a", "aac", "-c:s", "mov_text",
+                    "-metadata:s:s:0", "language=eng", "-movflags", "+faststart", str(filepath_out)], check=True)
+
+
+def run(name: str, chapters: tuple, untitled: dict, build: Callable[[list], Timeline], doc: str, narration: Optional[list] = None) -> None:
+    """
+    The command line every animation shares: --out, --width, --gif-width, --stills-only, and with a narration (one
+    written line per chapter) --narrate, which speaks the lines, stretches each chapter to fit its line, and gives the
+    mp4 a voice track and subtitles. build(seconds) gets the chapter lengths.
+    """
     parser = argparse.ArgumentParser(description=doc.strip().splitlines()[0])
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--width", type=int, default=1280)
     parser.add_argument("--gif-width", type=int, default=960)
     parser.add_argument("--stills-only", action="store_true")
+    if narration is not None:
+        parser.add_argument("--narrate", action="store_true")
+        parser.add_argument("--voice", default="af_heart")
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     mn.config.media_dir = str(Path.home() / ".cache" / "imgui_ophys_manim")
     mn.Text.set_default(font=FONT, color=color(TEXT))
-    s = build()
+    names, seconds = [n for n, _ in chapters], [float(d) for _, d in chapters]
+    clips = None
+    if narration is not None and args.narrate:
+        if len(narration) != len(chapters):
+            raise ValueError(f"{len(narration)} narration lines for {len(chapters)} chapters")
+        clips = narrate(narration, args.out, args.voice)
+        seconds = chapter_seconds(seconds, clips)
+        print("chapters: " + ", ".join(f"{d:.1f}" for d in seconds) + f" s = {sum(seconds):.0f} s")
+    s = build(seconds)
     camera = new_camera(args.width)
-    for filepath in stills(s, camera, args.out, chapters, untitled):
+    for filepath in stills(s, camera, args.out, names, seconds, untitled):
         print(filepath)
     if args.stills_only:
         return
     filepath_mp4, filepath_gif = args.out / f"{name}.mp4", args.out / f"{name}.gif"
-    n = movie(s, camera, filepath_mp4, filepath_gif, gif_width=args.gif_width)
-    print(f"{filepath_mp4}: {n} frames at {FPS} fps, {s.duration:.0f} s of animation")
+    filepath_video = args.out / "tts" / f"{name}_silent.mp4" if clips else filepath_mp4
+    n = movie(s, camera, filepath_video, filepath_gif, gif_width=args.gif_width)
+    if clips:
+        starts = np.concatenate([[0.0], np.cumsum(seconds)[:-1]]) + LEAD
+        filepath_wav, filepath_srt = args.out / "tts" / f"{name}.wav", args.out / f"{name}.srt"
+        soundtrack(clips, starts, n / FPS, filepath_wav)
+        subtitles(narration, clips, starts, filepath_srt)
+        mux(filepath_video, filepath_wav, filepath_srt, filepath_mp4)
+        print(f"{filepath_srt}: {len(clips)} cues")
+    print(f"{filepath_mp4}: {n} frames at {FPS} fps, {s.duration:.0f} s of animation" + (", with voice" if clips else ""))
     print(f"{filepath_gif}: {filepath_gif.stat().st_size / 1e6:.1f} MB")

@@ -77,7 +77,7 @@ def noise_label(x: float) -> mn.Text:
     return label(f"noise SD {x:.3f}", ACCENT, 26)
 
 
-def build() -> kit.Timeline:
+def build(seconds: list) -> kit.Timeline:
     p = sim.TraceParams(duration=30.0)
     tr = sim.make_trace(p)
     fs = p.fs
@@ -180,7 +180,6 @@ def build() -> kit.Timeline:
     noise_text = noise_label(noise[SIGMAS[0]]).move_to(at(1.2, -1.9), aligned_edge=mn.LEFT)
     smoothing = [path_raw, paths_smooth[SIGMAS[0]], name_s, bars_s, path_e_truth, path_e_raw, paths_e_smooth[SIGMAS[0]], name_e, bars_e, spike_e, peak_text, noise_text]
 
-    seconds = [d for _, d in CHAPTERS]
     chapters = [
         chapter(seconds[0], mn.FadeIn(title),
                 mn.AnimationGroup(mn.FadeIn(names_one[0]), mn.FadeIn(tick)),

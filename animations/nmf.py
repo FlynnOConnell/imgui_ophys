@@ -53,7 +53,7 @@ def trace(values: np.ndarray, hi: float, c: tuple, x: float, y: float, width: fl
     return path(axes, np.arange(values.size), values, c, 2.0, 0, hi)
 
 
-def build() -> kit.Timeline:
+def build(seconds: list) -> kit.Timeline:
     movie = M.make_tiny()
     Y = movie.Y.astype(float)
     side, T = movie.side, movie.frames
@@ -123,7 +123,6 @@ def build() -> kit.Timeline:
     true_traces = [trace(C_true[k], float(C_true.max()) * 1.05, PARTS[k], fit_x[k], -3.1, 2.4, 0.6) for k in range(K)]
     row_names = mn.VGroup(label("fitted", DIM, 16).move_to(at(-6.9, 0.5), aligned_edge=mn.LEFT), label("true (simulated)", DIM, 16).move_to(at(-6.9, -2.4), aligned_edge=mn.LEFT))
 
-    seconds = [d for _, d in CHAPTERS]
     chapters = [
         chapter(seconds[0],
                 mn.AnimationGroup(mn.FadeIn(title), mn.FadeIn(screen), mn.FadeIn(screen_frame), mn.FadeIn(name_movie), run_time=0.8),
