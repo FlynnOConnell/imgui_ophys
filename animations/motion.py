@@ -55,7 +55,7 @@ def under(img: mn.Mobject, text: str, c: tuple = DIM) -> mn.Text:
     return label(text, c, 18).next_to(img, mn.DOWN, buff=0.12)
 
 
-def build() -> kit.Timeline:
+def build(seconds: list) -> kit.Timeline:
     ref = M.field()
     rigid_motion = M.make_motion(FRAMES, bend=0.0)
     bent_motion = M.make_motion(FRAMES, bend=BEND)
@@ -143,7 +143,6 @@ def build() -> kit.Timeline:
     crisp = mn.VGroup(*[label(f"crispness {M.crispness(img):.1f}", KEY if k == 2 else DIM, 17).next_to(built_names[k], mn.DOWN, buff=0.1) for k, img in enumerate(built)])
     built_all = [*built_imgs, built_names, crisp]
 
-    seconds = [d for _, d in CHAPTERS]
     chapters = [
         chapter(seconds[0],
                 mn.AnimationGroup(mn.FadeIn(title), mn.FadeIn(movie), mn.FadeIn(frames_of[0]), mn.FadeIn(names[0]), run_time=0.8),

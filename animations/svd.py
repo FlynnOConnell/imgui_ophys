@@ -44,7 +44,7 @@ def piece_grid(piece: np.ndarray, m: float, c: tuple, cell: float, x: float, y: 
     return grid(diverging_rgb(piece, m, c), cell, x, y)
 
 
-def build() -> kit.Timeline:
+def build(seconds: list) -> kit.Timeline:
     Y = M.small_image()
     n = Y.shape[0]
     small = M.svd(Y)
@@ -142,7 +142,6 @@ def build() -> kit.Timeline:
     bars_kept = [mn.VGroup(*[bars[j].copy().set_fill(color(ACCENT), opacity=0.9 if j < k else 0.0) for j in range(n_big)]) for k in RANKS]
     bars_name = label("s values, largest first", DIM, 16).next_to(bars, mn.UP, buff=0.1)
 
-    seconds = [d for _, d in CHAPTERS]
     chapters = [
         chapter(seconds[0], mn.FadeIn(title), mn.FadeIn(y_grid, lag_ratio=0.01), mn.FadeIn(y_frame), mn.FadeIn(name_y), lag_ratio=0.3),
         chapter(seconds[1],
