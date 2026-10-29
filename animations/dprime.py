@@ -3,22 +3,24 @@
 # dependencies = ["manim>=0.22", "numpy", "pillow<13"]
 # ///
 """
-d' as one animation: a trace, one spike, its two windows clustered, the number, then the picture morphing as noise and
-photobleaching come and go, and a table of examples. Built from imgui_ophys's trace simulator with the spike times
-known; drawn with kit.py (manim through a Cairo camera, no Scene).
+d' as one animation: a trace, one spike, its two windows clustered, the gap between the clusters measured in cluster
+spreads, then the picture morphing as noise and photobleaching come and go, and a table of examples. Built from
+imgui_ophys's trace simulator with the spike times known; drawn with kit.py (manim through a Cairo camera, no Scene).
 
-    uv run -p 3.12 animations/dprime.py --out <dir> [--stills-only] [--gif-width 720]
+    uv run -p 3.12 animations/dprime.py --out <dir> [--stills-only] [--gif-width 720] [--narrate [--voice af_heart]]
 
-Text only, no LaTeX. Needs ffmpeg on PATH.
+With --narrate one line per chapter is spoken (Kokoro, local, through animations/narrate.py), each chapter lasts as long
+as its line, and the mp4 carries the voice and subtitles. Text only, no LaTeX. Needs ffmpeg and uv on PATH.
 """
 
+import functools
 from dataclasses import dataclass
 
 import manim as mn
 import numpy as np
 
 import kit
-from kit import (ACCENT, DIM, KEY, TEXT, TRACE, TRUTH, Count, axes_points, caption, chapter, color, dots_at, label, path,
+from kit import (ACCENT, DIM, KEY, TEXT, TRACE, TRUTH, Count, at, axes_points, caption, chapter, color, dots_at, label, path,
                  plain_axes, put, replace, scale_bars, timeline)
 
 M = kit.lesson_model("dprime")
@@ -28,6 +30,9 @@ BEFORE, PEAK = ACCENT, KEY  # the frames just before a spike, and at the respons
 WINDOW_FRAMES = 6  # frames in each pool per spike, as in the lesson and the jGCaMP8 paper's six frames
 F0_WINDOW = 5.0  # s, running 20th-percentile baseline for dF/F
 TARGETS = (0.5, 1.0, 2.0, 3.0, 4.0)  # the closing table: white noise added to a clean cell until d' lands here
+N_TICKS = 6  # spread ticks a ruler can show; every ruler has this many so that they transform into each other
+H_TRACE, Y_TRACE = 1.5, 2.0  # the whole trace's panel, scene units
+H_LOWER, Y_LOWER = 3.0, -1.3  # the zoom and the clusters, sharing one dF/F scale
 
 TITLE = "d': a measure of how well spikes stand out from noise"
 CHAPTERS = (
@@ -41,7 +46,7 @@ CHAPTERS = (
     ("Add photobleaching", 7.0),
     ("", 12.0),
 )
-UNTITLED = {0: "the-trace", 1: "one-spike", 2: "two-clusters", 3: "every-spike", 4: "the-number", 8: "examples"}  # still file names of the chapters without a title
+UNTITLED = {0: "the-trace", 1: "one-spike", 2: "two-clusters", 3: "every-spike", 4: "the-ruler", 8: "examples"}  # still file names of the chapters without a title
 # the cells the animation morphs between, in order: (name, brightness in photons / pixel / frame, bleach fraction, F0)
 CELLS = (
     ("base", 20.0, 0.2, "running window"),
@@ -96,13 +101,31 @@ def mean_line(axes: mn.Axes, x_center: float, value: float, c: tuple) -> mn.Line
     return mn.Line(a, b, color=color(c), stroke_width=3.0)
 
 
-def sd_bar(axes: mn.Axes, x: float, mean: float, sd: float, c: tuple) -> mn.VGroup:
-    """A vertical bar from mean - sd to mean + sd with end caps."""
-    lo, hi = axes_points(axes, np.array([x, x]), np.array([mean - sd, mean + sd]))
-    cap = np.array([0.06, 0, 0])
+def sd_bar(axes: mn.Axes, x: float, mean: float, sd: float, c: tuple, direction: float) -> mn.VGroup:
+    """One spread: a capped bar from the mean one sd toward the other cluster (direction +1 up, -1 down)."""
+    lo, hi = axes_points(axes, np.array([x, x]), np.array(sorted([mean, mean + direction * sd])))
+    cap = at(0.06, 0)
     return mn.VGroup(mn.Line(lo, hi, color=color(c), stroke_width=2.0),
                      mn.Line(lo - cap, lo + cap, color=color(c), stroke_width=2.0),
                      mn.Line(hi - cap, hi + cap, color=color(c), stroke_width=2.0))
+
+
+def ruler(axes: mn.Axes, x: float, mean_before: float, mean_peak: float, sd: float) -> mn.VGroup:
+    """
+    The gap from the before mean up to the peak mean, ticked every spread: the ticks that fit are d'. Always N_TICKS
+    ticks, the ones past the gap at its top and invisible, so that rulers of different cells transform into each other.
+    """
+    lo, hi = axes_points(axes, np.array([x, x]), np.array([mean_before, mean_peak]))
+    cap, tick = at(0.09, 0), at(0.16, 0)
+    parts = [mn.Line(lo, hi, color=color(TEXT), stroke_width=2.5),
+             mn.Line(lo - cap, lo + cap, color=color(TEXT), stroke_width=2.0),
+             mn.Line(hi - cap, hi + cap, color=color(TEXT), stroke_width=2.0)]
+    for k in range(1, N_TICKS + 1):
+        y = mean_before + k * sd
+        fits = y < mean_peak
+        pt = axes_points(axes, np.array([x]), np.array([min(y, mean_peak)]))[0]
+        parts.append(mn.Line(pt, pt + tick, color=color(TEXT), stroke_width=2.5, stroke_opacity=1.0 if fits else 0.0))
+    return mn.VGroup(*parts)
 
 
 @dataclass
@@ -158,9 +181,35 @@ def example_rows(examples: list, t: np.ndarray, y_top: float, pitch: float) -> l
     return rows
 
 
-def build() -> tuple:
-    """The animation and its cells."""
+def simulate_all() -> dict:
+    """The cells the animation morphs between, plus the clean one the examples are built from."""
     cells = {name: simulate(name, brightness, bleach, f0) for name, brightness, bleach, f0 in CELLS}
+    cells["clean"] = simulate("clean", 5000.0, 0.0, "running window", neuropil=0.0, read_noise=0.0)
+    return cells
+
+
+def narration(cells: dict) -> list:
+    """One written line per chapter; kit.spoken() turns it into what the voice says, and chapters 1 to 4 show theirs."""
+    s = cells["base"].score
+    d = {name: cell.score.d for name, cell in cells.items()}
+    return [
+        "d' is a measure of how well spikes stand out from noise. Here is one cell's calcium trace, simulated so that the spike times are known: the green ticks.",
+        "Take one spike. Keep the 6 frames just before it (blue) and the 6 frames at the peak of its response (yellow).",
+        "Stack those frames by value: a blue cluster and a yellow cluster.",
+        f"Do the same for every isolated spike and pool the frames: {s.n} spikes here, {WINDOW_FRAMES} frames each.",
+        f"d' is the gap between the two cluster means, measured in cluster spreads. Here the gap holds {d['base']:.1f} spreads.",
+        f"Add noise. The gap stays about the same, both clusters widen, and d' falls to {d['noisy']:.1f}.",
+        f"Remove the noise. The clusters tighten and d' climbs to {d['quiet']:.1f}.",
+        f"Add photobleaching, with one baseline for the whole recording. Early frames sit high, late frames low, both clusters smear, and d' drops to {d['bleached']:.1f}.",
+        "The same cell at six noise levels. A threshold halfway between the clusters calls this share of frames right.",
+    ]
+
+
+def build(cells: dict, seconds: list) -> kit.Timeline:
+    """The animation, each chapter seconds[k] long."""
+    lines = narration(cells)
+    clean = cells["clean"]
+    cells = {name: cells[name] for name, *_ in CELLS}
     base = cells["base"]
     fs = 1.0 / (base.t[1] - base.t[0])
     s = base.score
@@ -175,7 +224,7 @@ def build() -> tuple:
     y_lo, y_hi = float(min(c.dff.min() for c in cells.values())), float(max(c.dff.max() for c in cells.values()))
     pad = 0.05 * (y_hi - y_lo)
     y_lo, y_hi = y_lo - pad, y_hi + pad
-    axes_trace = put(plain_axes(0, float(base.t[-1]), y_lo, y_hi, 13.0, 1.7, visible=False), 0.0, 1.85)
+    axes_trace = put(plain_axes(0, float(base.t[-1]), y_lo, y_hi, 13.0, H_TRACE, visible=False), 0.0, Y_TRACE)
     bars_trace = scale_bars(axes_trace, float(base.t[-1]), y_lo, y_hi, 5.0, 0.22)
     paths_trace = {name: path(axes_trace, c.t, c.dff, TRACE, 1.4, y_lo, y_hi) for name, c in cells.items()}
     tick_bottom, tick_top = y_lo - 0.08 * (y_hi - y_lo), y_lo - 0.02 * (y_hi - y_lo)
@@ -197,7 +246,7 @@ def build() -> tuple:
     z_pad = 0.12 * (z_hi - z_lo)
     z_lo, z_hi = z_lo - z_pad, z_hi + z_pad
     span = (hi_i - lo_i) / fs
-    axes_zoom = put(plain_axes(0, span, z_lo, z_hi, 4.6, 2.3, visible=False), -4.3, -1.35)
+    axes_zoom = put(plain_axes(0, span, z_lo, z_hi, 4.6, H_LOWER, visible=False), -4.3, Y_LOWER)
     bars_zoom = scale_bars(axes_zoom, span, z_lo, z_hi, 0.5, 0.0, with_dff=False)
     t_zoom = (np.arange(lo_i, hi_i) - lo_i) / fs
     paths_zoom = {name: path(axes_zoom, t_zoom, c.dff[lo_i:hi_i], TRACE, 1.6, z_lo, z_hi) for name, c in cells.items()}
@@ -205,9 +254,9 @@ def build() -> tuple:
     zoom_target = paths_zoom["base"]
     paths_zoom["base"] = path(axes_trace, base.t[lo_i:hi_i], base.dff[lo_i:hi_i], TRACE, 1.4, y_lo, y_hi)
     paths_zoom["base"].set_stroke(opacity=0.0)  # a Transform source is drawn from t = 0; the flight reveals it
-    frame_zoom = mn.Rectangle(width=4.6, height=2.3, color=color(DIM), stroke_width=1.5).move_to(axes_zoom)
+    frame_zoom = mn.Rectangle(width=4.6, height=H_LOWER, color=color(DIM), stroke_width=1.5).move_to(axes_zoom)
     zoom_name = label(f"spike +/- {span / 2:.1f} s", DIM, 18).next_to(axes_zoom, mn.DOWN, buff=0.1).align_to(axes_zoom, mn.LEFT)
-    on_trace = mn.Rectangle(width=max(span / float(base.t[-1]) * 13.0, 0.12), height=1.7, color=color(DIM), stroke_width=1.5)
+    on_trace = mn.Rectangle(width=max(span / float(base.t[-1]) * 13.0, 0.12), height=H_TRACE, color=color(DIM), stroke_width=1.5)
     on_trace.move_to(axes_points(axes_trace, np.array([0.5 * (base.t[lo_i] + base.t[hi_i - 1])]), np.array([0.5 * (y_lo + y_hi)]))[0])
     box_flying = on_trace.copy()
     before_i = np.arange(center - n_frames, center) - lo_i
@@ -219,7 +268,7 @@ def build() -> tuple:
     names_zoom = mn.VGroup(label("6 frames before the spike", BEFORE, 18), label("6 at the peak", PEAK, 18)).arrange(mn.RIGHT, buff=0.4)
     names_zoom.next_to(axes_zoom, mn.UP, buff=0.1).align_to(axes_zoom, mn.LEFT)
 
-    axes_piles = put(plain_axes(0, 2.0, z_lo, z_hi, 2.0, 2.3), -0.6, -1.35)
+    axes_piles = put(plain_axes(0, 2.0, z_lo, z_hi, 2.0, H_LOWER), -0.6, Y_LOWER)
     x_before, x_peak = 0.5, 1.5
     rng = np.random.default_rng(0)
     jitter = [rng.uniform(-0.28, 0.28, n_frames) for _ in range(s.n)]
@@ -246,7 +295,7 @@ def build() -> tuple:
         c_k = int(s.centers[k])
         for start, c in ((c_k - n_frames, BEFORE), (c_k + peak, PEAK)):
             a = axes_points(axes_trace, np.array([base.t[start], base.t[start + n_frames - 1] + 1 / fs]), np.array([y_lo, y_hi]))
-            bands.add(mn.Rectangle(width=max(a[1, 0] - a[0, 0], 0.03), height=1.7, stroke_width=0, fill_color=color(c), fill_opacity=0.35)
+            bands.add(mn.Rectangle(width=max(a[1, 0] - a[0, 0], 0.03), height=H_TRACE, stroke_width=0, fill_color=color(c), fill_opacity=0.35)
                       .move_to(0.5 * (a[0] + a[1])))
     names_piles = label("clustered", DIM, 18).next_to(axes_piles, mn.UP, buff=0.1)
     count = label(f"{s.n} spikes x {n_frames} frames", DIM, 18).next_to(axes_piles, mn.DOWN, buff=0.1)
@@ -258,13 +307,12 @@ def build() -> tuple:
         top, bottom = sc.top.ravel(), sc.bottom.ravel()
         pooled = float(np.sqrt(0.5 * (top.var() + bottom.var())))
         means[name] = mn.VGroup(mean_line(axes_piles, x_before, float(bottom.mean()), BEFORE), mean_line(axes_piles, x_peak, float(top.mean()), PEAK))
-        sds[name] = mn.VGroup(sd_bar(axes_piles, x_before - 0.46, float(bottom.mean()), pooled, BEFORE),
-                              sd_bar(axes_piles, x_peak + 0.46, float(top.mean()), pooled, PEAK))
-        a, b = axes_points(axes_piles, np.array([1.0, 1.0]), np.array([float(bottom.mean()), float(top.mean())]))
-        gaps[name] = mn.DoubleArrow(a, b, buff=0, stroke_width=2.0, tip_length=0.12, color=color(TEXT))
+        sds[name] = mn.VGroup(sd_bar(axes_piles, x_before - 0.46, float(bottom.mean()), pooled, BEFORE, +1.0),
+                              sd_bar(axes_piles, x_peak + 0.46, float(top.mean()), pooled, PEAK, -1.0))
+        gaps[name] = ruler(axes_piles, 1.0, float(bottom.mean()), float(top.mean()), pooled)
+        print(f"{name:9s}: gap {top.mean() - bottom.mean():.3f}, spread {pooled:.3f}, d' = {sc.d:.2f} over {sc.n} spikes, accuracy {100 * M.accuracy(sc.d):.0f}%")
     number = number_label(s.d).move_to(np.array([x_right, -1.0, 0.0]), aligned_edge=mn.LEFT)
     pieces = Pieces(paths_trace, paths_zoom, zoom_pts, (dots_before_zoom, dots_peak_zoom), pile_pts, dots_before, dots_peak, means, sds, gaps)
-    clean = simulate("clean", 5000.0, 0.0, "running window", neuropil=0.0, read_noise=0.0)
     examples = M.noise_rows(clean.dff, clean.spikes, clean.fs, peak, n_frames, M.quiet_before(sim.BY_NAME["GCaMP6f"]), TARGETS)
     rows = example_rows(examples, base.t, -0.45, 0.58)
     header = mn.VGroup(label("d'", DIM, 18).move_to(np.array([3.0, 0.1, 0.0]), aligned_edge=mn.LEFT),
@@ -273,19 +321,8 @@ def build() -> tuple:
     lower = [on_trace, bands, bars_zoom, zoom_name, names_zoom, dots_before_zoom, dots_peak_zoom, *dots_before, *dots_peak,
              axes_piles, names_piles, count, means["base"], sds["base"], gaps["base"], number, paths_zoom["base"]]
 
-    captions = [
-        None,
-        caption("Take one spike. Keep the 6 frames just before it (blue) and the 6 frames at the peak of its response (yellow)."),
-        caption("Stack those frames by value: a blue cluster and a yellow cluster. d' is how far the yellow cluster sits above the blue one, in units of how wide the clusters are."),
-        caption(f"Do the same for every isolated spike and pool the frames: {s.n} spikes here, {n_frames} frames each. The result is one number for the cell."),
-        None,
-        None,
-        None,
-        None,
-        None,
-    ]
+    captions = [caption(line) if 1 <= k <= 4 else None for k, line in enumerate(lines)]
 
-    seconds = [d for _, d in CHAPTERS]
     chapters = [
         chapter(seconds[0], mn.FadeIn(title), mn.Create(paths_trace["base"]), mn.FadeIn(bars_trace),
                 mn.FadeIn(ticks), mn.FadeIn(legend_trace), lag_ratio=0.15),
@@ -306,8 +343,8 @@ def build() -> tuple:
                 mn.LaggedStart(*[mn.Transform(dots_before[k], dots_at(pile_pts["base"][0][k], BEFORE)) for k in others], lag_ratio=0.12),
                 mn.LaggedStart(*[mn.Transform(dots_peak[k], dots_at(pile_pts["base"][1][k], PEAK)) for k in others], lag_ratio=0.12),
                 mn.FadeIn(count), lag_ratio=0.1),
-        chapter(seconds[4], *swap(chapter_titles, captions, 4), mn.Create(means["base"]), mn.FadeIn(gaps["base"]), mn.Create(sds["base"]),
-                mn.FadeIn(number), lag_ratio=0.12),
+        chapter(seconds[4], *swap(chapter_titles, captions, 4), mn.Create(means["base"]), mn.Create(sds["base"]), mn.Create(gaps["base"]),
+                mn.FadeIn(number), lag_ratio=0.15),
         morph(seconds[5], swap(chapter_titles, captions, 5), pieces, "noisy", s.n, number, s.d, cells["noisy"].score.d),
         morph(seconds[6], swap(chapter_titles, captions, 6), pieces, "quiet", s.n, number, cells["noisy"].score.d, cells["quiet"].score.d),
         morph(seconds[7], swap(chapter_titles, captions, 7), pieces, "bleached", s.n, number, cells["quiet"].score.d, cells["bleached"].score.d),
@@ -320,23 +357,9 @@ def build() -> tuple:
                                   lag_ratio=0.3),
                 lag_ratio=1.0),
     ]
-    cells["clean"] = clean
-    return timeline([], chapters), cells
-
-
-# ----------------------------------------------------------------------
-# rendering
-# ----------------------------------------------------------------------
-
-
-
-
-def build_timeline() -> kit.Timeline:
-    s, cells = build()
-    for c in cells.values():
-        print(f"{c.name:9s}: d' = {c.score.d:.2f} over {c.score.n} spikes, accuracy {100 * M.accuracy(c.score.d):.0f}%")
-    return s
+    return timeline([], chapters)
 
 
 if __name__ == "__main__":
-    kit.run("dprime", CHAPTERS, UNTITLED, build_timeline, __doc__)
+    cells_all = simulate_all()
+    kit.run("dprime", CHAPTERS, UNTITLED, functools.partial(build, cells_all), __doc__, narration(cells_all))
