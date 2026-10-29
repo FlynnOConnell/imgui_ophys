@@ -1,7 +1,7 @@
 """
 The Traces stage: one ROI's recording from spikes to photons, for calcium or voltage indicators. Subsections: indicator
-response, dF/F and its baseline, neuropil, bleaching and noise (each part switchable), and temporal smoothing, with
-what it does to an event's shape.
+response, dF/F and its baseline, neuropil, bleaching and noise (each part switchable), and temporal smoothing, which
+lowers and widens the average event.
 """
 
 import numpy as np
@@ -16,7 +16,6 @@ from imgui_ophys.widgets import KEY, help_mark, section
 
 ImVec2, ImVec4 = imgui.ImVec2, imgui.ImVec4
 TRUTH = ImVec4(0.35, 0.85, 0.45, 1.0)
-# the parts of a recording, in equation order, with their colors and what each is
 PARTS = (
     ("signal", TRUTH, "the cell: resting light x (1 + dF/F)"),
     ("bleaching", ImVec4(0.95, 0.55, 0.15, 1.0), "the indicator fading over the session"),
