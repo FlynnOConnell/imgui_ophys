@@ -14,21 +14,21 @@ Run it straight from GitHub, no clone:
 uvx --from git+https://github.com/FlynnOConnell/imgui_ophys imgui-ophys --app dprime
 ```
 
-From a clone, with the Denoising page (it needs the lab's [vnoiser](https://github.com/FlynnOConnell/vnoiser)
-checked out next to this one):
+From a clone, with the Denoising page (it needs the lab's [vnoiser](https://github.com/FlynnOConnell/vnoiser) and
+[gevisim](https://github.com/FlynnOConnell/gevisim) checked out next to this one):
 
 ```bash
 git clone git@github.com:FlynnOConnell/vnoiser.git
+git clone git@github.com:FlynnOConnell/gevisim.git
 git clone git@github.com:FlynnOConnell/imgui_ophys.git
 cd imgui_ophys
 uv venv -p 3.12 && uv pip install -e ".[dev,denoise]"
 imgui-ophys                       # every page, rail on the left
 imgui-ophys --app traces          # open on one page
-imgui-ophys --file scan.npz       # a recorded trace for the Denoising page
 ```
 
-The package itself depends on `imgui-bundle` and `numpy` only. The `denoise` extra adds vnoiser with scipy,
-scikit-learn and PyWavelets; without it the Denoising page says how to install it and the rest runs. The `debug`
+The package itself depends on `imgui-bundle` and `numpy` only. The `denoise` extra adds vnoiser and gevisim with
+scipy, scikit-learn and PyWavelets; without it the Denoising page says how to install it and the rest runs. The `debug`
 extra adds [imgui_debugger](https://github.com/FlynnOConnell/imgui_debugger) and with it a Debug menu.
 
 ## The rail
@@ -40,11 +40,10 @@ The left rail lists the stages, the current stage's sections, and under them the
   JEDI3sub), each with its step response and time constants from the paper (hover the (?)).
 - **SNR**: one spike's peak dF/F over the noise SD of dF/F per frame. It sets the cell's brightness; shot noise, read
   noise and neuropil follow from that.
-- **Open a trace**: a `.npy`, `.npz` (the line scan export's `roi_<i>` arrays and `fs`) or `.csv`. The Denoising page
-  runs on it; the other pages keep the simulated cell, since they need its spike times.
 
-Traces, Signal quality and Denoising show the same cell. Motion correction and Demixing have their own movie and
-one or two controls each (tissue bends, NMF against PCA, the number of parts).
+Traces and Signal quality show the same cell. Motion correction and Demixing have their own movie and one or two
+controls each (tissue bends, NMF against PCA, the number of parts). Denoising has its own source and every
+parameter of the denoiser; see below.
 
 ## Pages
 
@@ -54,7 +53,7 @@ one or two controls each (tissue bends, NMF against PCA, the number of parts).
 | `nmf` | Demixing (NMF) | the movie as a matrix; footprints and traces; HALS updates; NMF vs PCA |
 | `traces` | Traces | indicator response; dF/F; neuropil, bleaching and noise; temporal smoothing |
 | `dprime` | Signal quality (d') | trace; spike +/- 0.8 s; clusters; examples |
-| `denoise` | Denoising (vnoiser) | from F to z; scalogram; bands and masks; denoised and peaks |
+| `denoise` | Denoising (vnoiser) | pixels to z; scalogram; bands; masks; denoised; peaks |
 | `svd` | SVD (under Other) | rank-1 matrices; power iteration and deflation; truncated SVD |
 
 Each page lists its references at the bottom.
@@ -64,10 +63,37 @@ response peak, pooled over spikes, (mean top - mean bottom) / pooled SD. Six fra
 voltage, where a 1 ms action potential fills one frame. The Cells buttons replay the animation's three moves: a
 fifth of the light, five times the light, and five times the light with photobleaching under a whole-recording F0.
 
-Denoising is vnoiser's Morlet wavelet denoiser as the lab's pipeline runs it (`Denoiser.upstream`): z-scored dF/F,
-a complex Morlet transform on 100 log-spaced scales, rows grouped into bands by PCA and Ward clustering, a soft
-mask per band that opens on events, the masked bands added back up with z's slow part, and `detect_peaks` on the
-trace the lab saves. With the simulated cell the page counts how many of the simulated spikes got a peak.
+Denoising is vnoiser's Morlet wavelet denoiser, one section per stage:
+
+    denoised = sum over bands of (band x mask) + the input's slow part
+
+z-scored dF/F, a complex Morlet transform on 100 log-spaced scales, rows grouped into bands by PCA and Ward
+clustering, a soft mask per band that opens on events, the masked bands added back up with z's slow part, and
+`detect_peaks` on the trace the lab saves. Every parameter sits in the rail under its stage; a change reruns that
+stage and the ones after it on a worker thread, and the stages call vnoiser's own classes, so the output matches
+`Denoiser.run` (`tests/test_denoise_pipeline.py`). **Defaults** and **Lab settings** switch between `Denoiser()` and
+`Denoiser.upstream`; **Copy code** copies the Python for the current settings. The time plots share one window: the
+chips at the top (all, 4 s, 1 s, 200 ms) set it, and zooming any plot zooms all.
+
+Two inputs:
+
+- **Simulated cell (gevisim)**: one JEDI3sub soma under a two-photon point focus, 20 s at 1075 Hz, 4 spikes/s,
+  its pixels' expected photons from gevisim. The one knob is **noise**: the shot noise SD relative to the simulated
+  photon budget (1 is the budget, 0 the noiseless cell). With it the page shows the noiseless z beside z and counts
+  how many simulated action potentials got a peak within 10 ms.
+- **Recorded MUnit**: a `.mesc` unit exported by `scripts/export_mesc_linescan.py` (`roi_<i>` pixel arrays and
+  `fs`), or the lab's per-ROI export (`F`, `fs`), found under `~/data` or browsed to. Pick the lines averaged into
+  the domain and the window shown.
+
+Each section ends on one number in yellow with its provenance beside it:
+
+| section | number | high | low |
+|---------|--------|------|-----|
+| Pixels to z | r, z against the noiseless z | | the pixels hold little of the cell; a wandering stripe is motion |
+| Bands | bands kept, and how many sit above the noise floor | the kept bands above the floor hold mostly noise; untick them under Sum | |
+| Masks | events in the chosen band | windows on noise: the threshold is too low | events without a window: too high |
+| Denoised | r, denoised against the noiseless z | | an event in "z - denoised" was cut |
+| Peaks | peaks, and how many simulated action potentials have one within 10 ms | peaks between action potentials: the levels are too low | action potentials without one: too high |
 
 ## Animations
 

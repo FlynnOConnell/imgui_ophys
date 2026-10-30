@@ -30,7 +30,7 @@
 - `config.py`: `~/.imgui_ophys/settings.json` and the UI scale.
 
 The only hard dependencies are imgui-bundle and numpy. imgui_debugger is optional, imported in a try in `app.py`. The
-scale handling and plotting helpers follow imgui_vnoiser.
+scale handling and the Denoising page came from imgui_vnoiser, which this repo replaces.
 
 ## Frame
 
@@ -61,9 +61,20 @@ is true, hello_imgui's idling is off so playback and iterative fits run at full 
   rows. The view follows one spike (median amplitude) and keeps its plot ranges fixed over the reference cells (the
   opening brightness, a fifth of it, five times it, five times it bleached), so a light or bleaching change moves
   the dots instead of the axes. A new indicator reseeds; a new SNR morphs.
-- Denoising (`denoise/model.py`): vnoiser's `Denoiser.upstream` on the cell's z-scored dF/F (or a file's), the
-  stages kept for drawing, `final_trace` and `detect_peaks` as `process_domain` runs them, and the peaks matched to
-  the simulated spikes within 10 ms. vnoiser is imported inside the model, so the package runs without it.
+- Denoising (`denoise/`): `signals.py` makes the input (`SignalParams`: the source, the noise knob and seed of the
+  gevisim cell, or a MUnit's path, lines and window) as a `Signal` with every step from pixels to z (`Pixels`).
+  The gevisim cell is built once per process (`gevisim_cell`: expected photons per pixel, spike times) and a noise
+  setting only redraws Poisson counts at `expected / noise^2 x noise^2`, so the mean stays and the SD scales.
+  `pipeline.py` is `Denoiser.run` split into `STAGES = signal, cwt, cluster, reduce, mask, final, peaks`:
+  `Settings` holds every parameter grouped by the stage it first affects (the cluster, reduce, mask and peaks groups
+  are vnoiser's own config dataclasses), `Settings.first_change(other)` names the earliest stage whose values
+  differ, and `compute(settings, start, previous)` copies the stages before `start` from `previous` and runs the
+  rest, calling vnoiser's classes and recomputing beside them what they discard (`band_details`, `mask_details`,
+  `peak_details`). `morlet.py` is pywt's `cmorB-C` in seconds and hertz. `plots.py` holds the page's colors,
+  decimated lines on the shared window, scale bars, colormaps and form rows. The view runs `compute` on one worker
+  thread: `update(dt)` lands a finished run and submits the next from the earliest changed stage, so a dragged
+  slider coalesces into at most one queued run; `animating()` is true while a run is in flight. vnoiser and gevisim
+  are imported in a try, so the package runs without the denoise extra.
 - SVD (under Other, `svd/model.py`): `Peel` finds the pieces one at a time by power iteration and deflation (u = R v,
   v = R' u until v settles, then subtract s u v'), one half-step per click; its pieces equal `np.linalg.svd`'s
   (tested). Signs are fixed so each U column's largest entry is positive.
