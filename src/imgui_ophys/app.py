@@ -5,11 +5,9 @@ menu opens a live inspector on the current stage and a style editor.
 """
 
 import argparse
-from pathlib import Path
 from typing import Optional, Sequence
 
 from imgui_bundle import hello_imgui, icons_fontawesome_6 as fa, imgui, immapp, implot
-from imgui_bundle import portable_file_dialogs as pfd
 
 from imgui_ophys import __version__, config, sim
 from imgui_ophys import plotting as P
@@ -40,7 +38,6 @@ class App:
         self.index = keys.index(lesson) if lesson in keys else 0
         self.recording = recording or sim.Recording()
         self.recording_version = 0
-        self.file_dialog: Optional[pfd.open_file] = None
         for x in self.lessons:
             x.goto = self.goto
             x.touch = self.touch_recording
@@ -117,7 +114,6 @@ class App:
     def gui(self) -> None:
         self.scale_keys()
         self.apply_scale()
-        self.poll_file_dialog()
         self.sync_recording()
         lesson = self.lesson
         lesson.update(imgui.get_io().delta_time)
@@ -190,7 +186,7 @@ class App:
         help_mark("Also Ctrl + / Ctrl -. Ctrl 0 resets to the detected scale. Saved in ~/.imgui_ophys/settings.json.")
 
     def draw_recording(self) -> None:
-        """Calcium or voltage, the indicator, the SNR, and a recorded file: the one block every trace page shares."""
+        """Calcium or voltage, the indicator and the SNR: the one block every trace page shares."""
         rec = self.recording
         section(f"{fa.ICON_FA_DNA}  Recording")
         for i, kind in enumerate(sim.KINDS):
@@ -212,23 +208,6 @@ class App:
         if imgui.is_item_deactivated_after_edit():
             self.touch_recording()
         help_mark("One spike's peak dF/F over the noise SD of dF/F per frame, at rest. It sets the cell's brightness.")
-        if imgui.button(f"{fa.ICON_FA_FOLDER_OPEN}  Open a trace"):
-            self.file_dialog = pfd.open_file("A recorded trace", str(Path.home()), ["Traces", "*.npy *.npz *.csv *.txt *.tsv", "All files", "*"])
-        help_mark("A .npy, .npz (roi_<i> arrays and fs, as the line scan export writes), .csv or .txt, one trace per column. The Denoising page runs on it; the other pages keep the simulated cell.")
-        if rec.path:
-            imgui.same_line()
-            if imgui.small_button(fa.ICON_FA_XMARK):
-                rec.path = ""
-                self.touch_recording()
-            imgui.text_disabled(Path(rec.path).name)
-
-    def poll_file_dialog(self) -> None:
-        if self.file_dialog is not None and self.file_dialog.ready():
-            chosen = self.file_dialog.result()
-            self.file_dialog = None
-            if chosen:
-                self.recording.path = chosen[0]
-                self.touch_recording()
 
     def draw_page(self) -> None:
         lesson = self.lesson
@@ -263,9 +242,8 @@ def run(argv: Optional[Sequence[str]] = None) -> None:
     parser = argparse.ArgumentParser(prog="imgui-ophys", description="Interactive lessons on optical physiology.")
     parser.add_argument("--app", default="", choices=["", *(cls.key for cls in LESSONS)], help="stage to open on")
     parser.add_argument("--scale", type=float, default=0.0, help="UI scale, e.g. 2 on a 2x HiDPI panel (default: saved, then detected)")
-    parser.add_argument("--file", default="", help="a recorded trace (.npy, .npz, .csv) for the Denoising page")
     args = parser.parse_args(argv)
-    app = App(lesson=args.app, scale=config.ui_scale(args.scale), recording=sim.Recording(path=args.file))
+    app = App(lesson=args.app, scale=config.ui_scale(args.scale))
     immapp.run(runner_params(app), immapp.AddOnsParams(with_implot=True))
 
 

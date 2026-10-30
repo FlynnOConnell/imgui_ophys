@@ -264,11 +264,10 @@ def snr_of(peak: float, brightness: float, pixels: int, read_noise: float, neuro
 
 @dataclass
 class Recording:
-    """The rail's choice, shared by every page that shows a trace: the indicator, how clearly one spike shows, and a file."""
+    """The rail's choice, shared by every page that shows a trace: the indicator and how clearly one spike shows."""
 
     indicator: str = "GCaMP6f"
     snr: float = 0.0  # 0: the kind's opening brightness
-    path: str = ""  # a recorded trace; the Denoising page runs on it, the simulated cell stays on the other pages
 
     @property
     def kind(self) -> str:
