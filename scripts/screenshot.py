@@ -34,10 +34,16 @@ class Shooter:
             index = keys.index(key)
             self.plan.append((lambda i=index: app.select(i), None))
             self.plan.append((lambda k=key: setattr(app.lesson, "jump", SECTION.get(k, 0)), None))
+            self.plan.append((self.settle, None))
             self.plan += [(None, None)] * SETTLE
             self.plan.append((None, f"{key}{suffix}.png"))
         self.frame = 0
         self.pending = None
+
+    def settle(self) -> None:
+        """A page that computes on a worker thread is drawn once its run is in."""
+        if hasattr(self.app.lesson, "wait"):
+            self.app.lesson.wait()
 
     def gui(self) -> None:
         if self.frame >= len(self.plan):

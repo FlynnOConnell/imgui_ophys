@@ -3,6 +3,7 @@ Draw every lesson for a few frames on hello_imgui's null backend: no window or G
 start here.
 """
 
+import numpy as np
 import pytest
 from imgui_bundle import hello_imgui, imgui, immapp
 
@@ -99,3 +100,31 @@ def test_dprime_every_kind_and_preset_renders():
     assert app.lesson.indicator.kind == "calcium"
     assert app.lesson.sections[1][1] == "Spike +/- 0.8 s"
     assert len(PRESETS) == 4
+
+
+def test_denoise_every_section_on_both_sources(tmp_path):
+    pytest.importorskip("vnoiser")
+    pytest.importorskip("gevisim")
+    rng = np.random.default_rng(0)
+    scan = tmp_path / "MSession_0_MUnit_1.npz"
+    np.savez(scan, fs=1587.3, unit="MSession_0/MUnit_1", roi_0=rng.integers(1150, 1250, size=(4000, 10), dtype=np.uint16))
+    app = App(lesson="denoise")
+    lesson = app.lesson
+    lesson.settings.signal.duration_s = 2.0
+    steps = [lambda a: a.lesson.wait()]
+    for j in range(len(lesson.outline())):
+        steps.append(lambda a, j=j: setattr(a.lesson, "jump", j))
+    steps.append(lambda a: setattr(a.lesson, "heat_mode", 3))
+    steps.append(lambda a: (setattr(a.lesson.t0, "value", 0.5), setattr(a.lesson.t1, "value", 0.7)))
+
+    def munit(a):
+        sp = a.lesson.settings.signal
+        sp.source, sp.scan_path, sp.rois, sp.duration_s = "munit", str(scan), (0,), 2.0
+        a.lesson.wait()
+
+    steps.append(munit)
+    for j in range(len(lesson.outline())):
+        steps.append(lambda a, j=j: setattr(a.lesson, "jump", j))
+    run_frames(app, steps)
+    assert lesson.run.error == "" and lesson.run.signal.pixels.names == ["line 0"]
+    assert lesson.run.peaks is not None
