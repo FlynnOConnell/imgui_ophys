@@ -5,15 +5,17 @@ menu opens a live inspector on the current stage and a style editor.
 """
 
 import argparse
+from pathlib import Path
 from typing import Optional, Sequence
 
-from imgui_bundle import hello_imgui, imgui, immapp, implot
+from imgui_bundle import hello_imgui, icons_fontawesome_6 as fa, imgui, immapp, implot
+from imgui_bundle import portable_file_dialogs as pfd
 
-from imgui_ophys import __version__, config
+from imgui_ophys import __version__, config, sim
 from imgui_ophys import plotting as P
 from imgui_ophys.lesson import Lesson
 from imgui_ophys.lessons import LESSONS
-from imgui_ophys.widgets import help_mark
+from imgui_ophys.widgets import help_mark, section
 
 try:
     from imgui_debugger import DebugTools
@@ -32,12 +34,16 @@ IMPLOT_PADDINGS = (
 class App:
     """One instance of every lesson, the one on screen, the UI scale and the debug panels."""
 
-    def __init__(self, lesson: str = "", scale: float = 1.0):
+    def __init__(self, lesson: str = "", scale: float = 1.0, recording: Optional[sim.Recording] = None):
         self.lessons: list[Lesson] = [cls() for cls in LESSONS]
         keys = [x.key for x in self.lessons]
         self.index = keys.index(lesson) if lesson in keys else 0
+        self.recording = recording or sim.Recording()
+        self.recording_version = 0
+        self.file_dialog: Optional[pfd.open_file] = None
         for x in self.lessons:
             x.goto = self.goto
+            x.touch = self.touch_recording
         self.scale = config.clamp(scale)
         self.scale_applied = 1.0
         self.scale_edit: Optional[float] = None
@@ -58,6 +64,16 @@ class App:
         keys = [x.key for x in self.lessons]
         if key in keys:
             self.select(keys.index(key))
+
+    def touch_recording(self) -> None:
+        """The shared Recording changed: every page that uses it rebuilds when it is next drawn."""
+        self.recording_version += 1
+
+    def sync_recording(self) -> None:
+        lesson = self.lesson
+        if lesson.uses_recording and lesson.recording_version != self.recording_version:
+            lesson.recording_version = self.recording_version
+            lesson.set_recording(self.recording)
 
     # ------------------------------------------------------------------
     # scale
@@ -101,6 +117,8 @@ class App:
     def gui(self) -> None:
         self.scale_keys()
         self.apply_scale()
+        self.poll_file_dialog()
+        self.sync_recording()
         lesson = self.lesson
         lesson.update(imgui.get_io().delta_time)
         hello_imgui.get_runner_params().fps_idling.enable_idling = not lesson.animating()
@@ -154,6 +172,8 @@ class App:
             em = imgui.get_font_size()
             # leave about 9 em for each widget's label
             imgui.push_item_width(max(6 * em, imgui.get_content_region_avail().x - 9 * em))
+            if self.lesson.uses_recording:
+                self.draw_recording()
             self.lesson.controls()
             imgui.pop_item_width()
         imgui.end_child()
@@ -168,6 +188,47 @@ class App:
             self.set_scale(self.scale_edit)
             self.scale_edit = None
         help_mark("Also Ctrl + / Ctrl -. Ctrl 0 resets to the detected scale. Saved in ~/.imgui_ophys/settings.json.")
+
+    def draw_recording(self) -> None:
+        """Calcium or voltage, the indicator, the SNR, and a recorded file: the one block every trace page shares."""
+        rec = self.recording
+        section(f"{fa.ICON_FA_DNA}  Recording")
+        for i, kind in enumerate(sim.KINDS):
+            if i:
+                imgui.same_line()
+            if imgui.radio_button(kind, rec.kind == kind) and rec.kind != kind:
+                rec.set_kind(kind)
+                self.touch_recording()
+        names = [x.name for x in sim.INDICATORS if x.kind == rec.kind]
+        changed, k = imgui.combo("indicator", names.index(rec.indicator), names)
+        if changed:
+            rec.indicator = names[k]
+            self.touch_recording()
+        help_mark(sim.BY_NAME[rec.indicator].note)
+        shown = rec.snr if rec.snr > 0 else rec.default_snr()
+        changed, value = imgui.slider_float("SNR", shown, 0.3, 30.0, "%.1f", imgui.SliderFlags_.logarithmic)
+        if changed:
+            rec.snr = value
+        if imgui.is_item_deactivated_after_edit():
+            self.touch_recording()
+        help_mark("One spike's peak dF/F over the noise SD of dF/F per frame, at rest. It sets the cell's brightness.")
+        if imgui.button(f"{fa.ICON_FA_FOLDER_OPEN}  Open a trace"):
+            self.file_dialog = pfd.open_file("A recorded trace", str(Path.home()), ["Traces", "*.npy *.npz *.csv *.txt *.tsv", "All files", "*"])
+        help_mark("A .npy, .npz (roi_<i> arrays and fs, as the line scan export writes), .csv or .txt, one trace per column. The Denoising page runs on it; the other pages keep the simulated cell.")
+        if rec.path:
+            imgui.same_line()
+            if imgui.small_button(fa.ICON_FA_XMARK):
+                rec.path = ""
+                self.touch_recording()
+            imgui.text_disabled(Path(rec.path).name)
+
+    def poll_file_dialog(self) -> None:
+        if self.file_dialog is not None and self.file_dialog.ready():
+            chosen = self.file_dialog.result()
+            self.file_dialog = None
+            if chosen:
+                self.recording.path = chosen[0]
+                self.touch_recording()
 
     def draw_page(self) -> None:
         lesson = self.lesson
@@ -202,8 +263,9 @@ def run(argv: Optional[Sequence[str]] = None) -> None:
     parser = argparse.ArgumentParser(prog="imgui-ophys", description="Interactive lessons on optical physiology.")
     parser.add_argument("--app", default="", choices=["", *(cls.key for cls in LESSONS)], help="stage to open on")
     parser.add_argument("--scale", type=float, default=0.0, help="UI scale, e.g. 2 on a 2x HiDPI panel (default: saved, then detected)")
+    parser.add_argument("--file", default="", help="a recorded trace (.npy, .npz, .csv) for the Denoising page")
     args = parser.parse_args(argv)
-    app = App(lesson=args.app, scale=config.ui_scale(args.scale))
+    app = App(lesson=args.app, scale=config.ui_scale(args.scale), recording=sim.Recording(path=args.file))
     immapp.run(runner_params(app), immapp.AddOnsParams(with_implot=True))
 
 

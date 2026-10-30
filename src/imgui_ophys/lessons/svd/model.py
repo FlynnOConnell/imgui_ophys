@@ -93,7 +93,7 @@ class Peel:
         return self.s * np.outer(self.u, self.v)
 
     def step(self) -> str:
-        """One half-step; returns what it did: "u", "v" or "subtract"."""
+        """One half-step; returns the move made: "u", "v" or "subtract"."""
         did = self.next
         if did == "u":
             raw = self.R @ self.v

@@ -8,6 +8,8 @@ from typing import Callable, ClassVar, Optional
 from imgui_bundle import icons_fontawesome_6 as fa
 from imgui_bundle import imgui
 
+from imgui_ophys import sim
+
 REFERENCES = (fa.ICON_FA_BOOK, "References")
 
 
@@ -23,14 +25,22 @@ class Lesson:
     sections: ClassVar[tuple[tuple[str, str], ...]] = ()  # (icon, title) per subsection
     group: ClassVar[str] = ""  # "" for a pipeline stage; else a header the rail lists it under, after the stages
     references: ClassVar[tuple[tuple[str, str], ...]] = ()  # (citation, url), listed at the bottom of the page
+    uses_recording: ClassVar[bool] = False  # True: the page shows the rail's Recording and follows its changes
     goto: Optional[Callable[[str], None]] = None  # set by the window: open another stage by its key
+    touch: Optional[Callable[[], None]] = None  # set by the window: the page changed the shared Recording itself
+    recording: sim.Recording = sim.Recording()  # the window's, shared; replaced by set_recording
+    recording_version: int = -1  # the window's counter when set_recording last ran
     jump: Optional[int] = None  # a subsection to scroll to on the next frame
 
     def update(self, dt: float) -> None:
         """Advance by dt seconds of wall time."""
 
     def controls(self) -> None:
-        """Parameters, under the rail."""
+        """Parameters, under the rail, below the Recording when the page uses it."""
+
+    def set_recording(self, recording: sim.Recording) -> None:
+        """The rail's Recording changed (or the page is opening on it): rebuild what depends on it."""
+        self.recording = recording
 
     def outline(self) -> tuple[tuple[str, str], ...]:
         """The subsections as the rail lists them: `sections`, then References when there are any."""

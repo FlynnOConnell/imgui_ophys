@@ -1,50 +1,73 @@
 # imgui_ophys
 
 Interactive [imgui-bundle](https://github.com/pthom/imgui_bundle) pages, one per step of an optical physiology
-pipeline, on synthetic data with a known ground truth. Each page builds its idea up in a few sections; the number on
-screen reacts as the picture changes.
+pipeline, on a simulated cell with a known ground truth. Each page builds its idea up in a few sections, and the
+number on screen follows the picture as it changes.
 
-![Motion correction](docs/motion.png)
+![Signal quality (d')](docs/dprime.png)
 
 ## Install
 
 Run it straight from GitHub, no clone:
 
 ```bash
-uvx --from git+https://github.com/FlynnOConnell/imgui_ophys imgui-ophys --app nmf
+uvx --from git+https://github.com/FlynnOConnell/imgui_ophys imgui-ophys --app dprime
 ```
 
-Or inside an environment that already has imgui-bundle (only this package is added):
+From a clone, with the Denoising page (it needs the lab's [vnoiser](https://github.com/FlynnOConnell/vnoiser)
+checked out next to this one):
 
 ```bash
-uv run --with git+https://github.com/FlynnOConnell/imgui_ophys imgui-ophys --app nmf
-```
-
-From a clone:
-
-```bash
+git clone git@github.com:FlynnOConnell/vnoiser.git
 git clone git@github.com:FlynnOConnell/imgui_ophys.git
 cd imgui_ophys
-uv venv -p 3.12 && uv pip install -e ".[dev]"
+uv venv -p 3.12 && uv pip install -e ".[dev,denoise]"
 imgui-ophys                       # every page, rail on the left
-imgui-ophys --app motion          # open on one page
-python -m imgui_ophys.lessons.nmf # same, for demixing
+imgui-ophys --app traces          # open on one page
+imgui-ophys --file scan.npz       # a recorded trace for the Denoising page
 ```
 
-The only dependencies are `imgui-bundle` and `numpy` (which ImPlot's Python API needs). The `debug` extra adds
-[imgui_debugger](https://github.com/FlynnOConnell/imgui_debugger) and with it a Debug menu.
+The package itself depends on `imgui-bundle` and `numpy` only. The `denoise` extra adds vnoiser with scipy,
+scikit-learn and PyWavelets; without it the Denoising page says how to install it and the rest runs. The `debug`
+extra adds [imgui_debugger](https://github.com/FlynnOConnell/imgui_debugger) and with it a Debug menu.
+
+## The rail
+
+The left rail lists the stages, the current stage's sections, and under them the one block the trace pages share:
+
+- **calcium / voltage**, and the indicator: GCaMP6f, GCaMP6s and jGCaMP8m, or the voltage indicators
+  [gevisim](https://github.com/FlynnOConnell/gevisim) models (ASAP6.1, ASAP6.2, ASAP6.3, ASAP7y, JEDI-2P, JEDI3hyp,
+  JEDI3sub), each with its step response and time constants from the paper (hover the (?)).
+- **SNR**: one spike's peak dF/F over the noise SD of dF/F per frame. It sets the cell's brightness; shot noise, read
+  noise and neuropil follow from that.
+- **Open a trace**: a `.npy`, `.npz` (the line scan export's `roi_<i>` arrays and `fs`) or `.csv`. The Denoising page
+  runs on it; the other pages keep the simulated cell, since they need its spike times.
+
+Traces, Signal quality and Denoising show the same cell. Motion correction and Demixing have their own movie and
+one or two controls each (tissue bends, NMF against PCA, the number of parts).
 
 ## Pages
 
-| `--app` | page | subsections |
-|---------|------|-------------|
+| `--app` | page | sections |
+|---------|------|----------|
 | `motion` | Motion correction | registration; rigid registration; non-rigid (piecewise rigid) registration; reference image |
 | `nmf` | Demixing (NMF) | the movie as a matrix; footprints and traces; HALS updates; NMF vs PCA |
 | `traces` | Traces | indicator response; dF/F; neuropil, bleaching and noise; temporal smoothing |
 | `dprime` | Signal quality (d') | trace; spike +/- 0.8 s; clusters; examples |
+| `denoise` | Denoising (vnoiser) | from F to z; scalogram; bands and masks; denoised and peaks |
 | `svd` | SVD (under Other) | rank-1 matrices; power iteration and deflation; truncated SVD |
 
 Each page lists its references at the bottom.
+
+d' follows Zhang et al. 2023 (jGCaMP8): the frames just before each isolated spike against the frames at its
+response peak, pooled over spikes, (mean top - mean bottom) / pooled SD. Six frames per window for calcium, one for
+voltage, where a 1 ms action potential fills one frame. The Cells buttons replay the animation's three moves: a
+fifth of the light, five times the light, and five times the light with photobleaching under a whole-recording F0.
+
+Denoising is vnoiser's Morlet wavelet denoiser as the lab's pipeline runs it (`Denoiser.upstream`): z-scored dF/F,
+a complex Morlet transform on 100 log-spaced scales, rows grouped into bands by PCA and Ward clustering, a soft
+mask per band that opens on events, the masked bands added back up with z's slow part, and `detect_peaks` on the
+trace the lab saves. With the simulated cell the page counts how many of the simulated spikes got a peak.
 
 ## Animations
 
@@ -65,15 +88,24 @@ and its provenance ("Ground truth spikes (simulated)"), and a number counts alon
 Rebuild one with `uv run -p 3.12 animations/<page>.py --out <dir>`: the scripts declare their own dependencies
 (manim, numpy, pillow) and read the pure-numpy models straight from `src/`, so nothing is added to the app's
 environment. Each writes an mp4, a gif and a PNG per chapter; `kit.py` is what they share (manim through a
-Cairo camera, no Scene, chapters scrubbed to any time). The gifs here are 720 px at 10 fps; ffmpeg must be on PATH.
+Cairo camera, no Scene, chapters scrubbed to any time). `--narrate` speaks one line per chapter through Kokoro
+(`animations/narrate.py`, its own uv environment), stretches each chapter to its line and muxes voice and
+subtitles into the mp4. The gifs here are 720 px at 10 fps; ffmpeg must be on PATH.
 
 ## Screenshots
+
+![Motion correction](docs/motion.png)
 
 ![HALS](docs/nmf.png)
 
 ![dF/F](docs/traces.png)
 
-![d'](docs/dprime.png)
+![Denoising](docs/denoise.png)
+
+![Traces, voltage](docs/traces-voltage.png)
+
+`scripts/screenshot.py` draws every page in a hidden window into `docs/` (`--indicator JEDI3sub --suffix=-voltage`
+for the voltage set); it needs PyOpenGL and pillow.
 
 ## Text size
 
@@ -87,20 +119,22 @@ The last value is saved in `~/.imgui_ophys/settings.json`.
 
 ## Debug menu
 
-With the `debug` extra installed, Debug > Debugger opens a live inspector on the current page's state (imgui_debugger). Style Editor, Metrics, Debug
-Log and ID Stack are imgui's own tools.
+With the `debug` extra installed, Debug > Debugger opens a live inspector on the current page's state
+(imgui_debugger). Style Editor, Metrics, Debug Log and ID Stack are imgui's own tools.
 
-## Adding a page or subsection
+## Adding a page or section
 
 1. `src/imgui_ophys/lessons/<name>/model.py`: the numbers, no imgui (or use `sim.py`). Test it in `tests/`.
 2. `src/imgui_ophys/lessons/<name>/view.py`: a `Lesson` subclass with `key`, `title`, `summary`, `sections` (icon,
-   title per subsection) and `section_<i>()` for each, plus `controls()` for the rail. The summary is the quantity's
-   definition in one line ("a measure of how well spikes stand out from noise"); section titles name the content, never the
-   question ("Clusters", not "What d' says"). Figures from `diagram.py` and `plotting.py`: scale bars rather than
-   axes, labels with provenance, no caption that restates the title, no formula prose beside a number. A parameter
-   change morphs the picture and the number follows it (`update(dt)`, `animating()`), as in `dprime/view.py`.
+   title per section) and `section_<i>()` for each. Set `uses_recording = True` and implement `set_recording` if the
+   page shows the rail's cell; `controls()` draws anything of its own under it, and the fewer the better. The summary
+   is the quantity's definition in one line ("a measure of how well spikes stand out from noise"); section titles
+   name the content, never the question ("Clusters", not "What d' says"). Figures from `diagram.py` and
+   `plotting.py`: scale bars rather than axes, labels with provenance, no caption that restates the title, no
+   formula prose beside a number. A parameter change morphs the picture and the number follows it (`update(dt)`,
+   `animating()`), as in `dprime/view.py`.
 3. `__init__.py` exporting the class and `__main__.py` calling `run(["--app", "<key>"])`.
 4. Add the class to `LESSONS` in `src/imgui_ophys/lessons/__init__.py`. `tests/test_headless_render.py` draws every
-   subsection of every page.
+   section of every page.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md).

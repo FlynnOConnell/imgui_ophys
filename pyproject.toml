@@ -29,6 +29,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=7"]
 debug = ["imgui_debugger @ git+https://github.com/FlynnOConnell/imgui_debugger@ad9986a59b19428c4fa42f0b64891f8e03bac592"]
+denoise = ["vnoiser", "scipy>=1.9", "PyWavelets>=1.4", "scikit-learn>=1.2"]
 
 [project.scripts]
 imgui-ophys = "imgui_ophys.app:run"
@@ -37,6 +38,9 @@ imgui-ophys = "imgui_ophys.app:run"
 Homepage = "https://github.com/FlynnOConnell/imgui_ophys"
 Source = "https://github.com/FlynnOConnell/imgui_ophys"
 Issues = "https://github.com/FlynnOConnell/imgui_ophys/issues"
+
+[tool.uv.sources]
+vnoiser = { path = "../vnoiser", editable = true }
 
 [tool.setuptools.packages.find]
 where = ["src"]

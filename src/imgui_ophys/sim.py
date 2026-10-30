@@ -9,10 +9,14 @@ A frame's photons from an ROI of `pixels` pixels at `brightness` photons / pixel
     expected = brightness * pixels * (1 + dF/F) * bleach   +   neuropil
     counted  = Poisson(expected) + Normal(0, read_noise * sqrt(pixels))
 
-Indicator numbers are rough single-AP values from the literature, good for shapes and orders of magnitude only.
+The rail asks for an SNR rather than a brightness: the single-spike peak in dF/F over the noise SD of dF/F per
+frame. `brightness_for_snr` is the closed form of that ratio, so the slider and the simulation agree.
+
+Indicator numbers are single-step or single-AP values from the papers, good for shapes and orders of magnitude only.
+The voltage list is gevisim's (github.com/FlynnOConnell/gevisim), one YAML per indicator with its provenance.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -30,6 +34,7 @@ class Indicator:
 
 
 # Calcium kernels are fit so their time to peak (or half-rise) and half-decay match the paper's 1 AP numbers.
+# Voltage: amp is the dF/F of a -70 to +30 mV step, rise the activation and decay the deactivation time constant.
 INDICATORS = (
     Indicator("GCaMP6f", "calcium", 0.19, 0.017, 0.18, 30.0, 30.0,
               "1 AP in vivo (mouse V1): dF/F 19%, time to peak 45 ms, half-decay 142 ms. Chen et al. 2013, Suppl. Table 3"),
@@ -37,15 +42,28 @@ INDICATORS = (
               "1 AP in vivo (mouse V1): dF/F 23%, time to peak 179 ms, half-decay 550 ms. Chen et al. 2013, Suppl. Table 3"),
     Indicator("jGCaMP8m", "calcium", 0.75, 0.014, 0.17, 30.0, 30.0,
               "1 AP in culture: dF/F 0.75, half-rise 7.4 ms, half-decay 134 ms. Zhang et al. 2023, Ext. Data Table 3"),
-    Indicator("ASAP3", "voltage", -0.51, 0.00094, 0.0038, 1000.0, 2.0,
-              "-70 to +30 mV in HEK cells (one-photon): dF/F -51%; activation 0.94 ms, deactivation 3.8 ms (fast components). Villette et al. 2019"),
-    Indicator("JEDI-2P", "voltage", -0.48, 0.00054, 0.0012, 1000.0, 2.0,
-              "100 mV step, two-photon: dF/F about -48% (read from Fig. 2C); depolarization 0.54 ms, repolarization 1.21 ms. Liu et al. 2022"),
+    Indicator("ASAP6.1", "voltage", 1.64, 0.00399, 0.00489, 1000.0, 10.0,
+              "HEK293A, 1P, room temperature: dF/F +164% for -70 to +30 mV; activation 3.99 ms, deactivation 4.89 ms. Lee et al. 2024, Suppl. Tables 2-3"),
+    Indicator("ASAP6.2", "voltage", 0.92, 0.00374, 0.00616, 1000.0, 10.0,
+              "HEK293A, 1P, room temperature: dF/F +92% for -70 to +30 mV; activation 3.74 ms, deactivation 6.16 ms. Lee et al. 2024, Suppl. Tables 2-3"),
+    Indicator("ASAP6.3", "voltage", 2.22, 0.00393, 0.00441, 1000.0, 10.0,
+              "HEK293A, 1P, room temperature: dF/F +222% for -70 to +30 mV; activation 3.93 ms, deactivation 4.41 ms. Lee et al. 2024, Suppl. Tables 2-3"),
+    Indicator("ASAP7y", "voltage", -0.80, 0.0030, 0.0037, 1000.0, 10.0,
+              "HEK293, 1P, 25 C: dF/F -80% for -70 to +30 mV; activation 3.0 ms (0.9 ms at 37 C), deactivation not quantified (3.7 ms assumed). Hao et al. 2026, Fig. 1b, ED Fig. 1b"),
+    Indicator("JEDI-2P", "voltage", -0.418, 0.00055, 0.0012, 1000.0, 10.0,
+              "HEK293-Kir2.1, 2P, 23 C: dF/F -41.8% for -70 to +30 mV; activation 0.55 ms (fast component), deactivation 1.20 ms at 33 C. Land et al. 2026, Table 1, Suppl. Fig. 3"),
+    Indicator("JEDI3hyp", "voltage", -0.515, 0.00048, 0.00211, 1000.0, 10.0,
+              "HEK293-Kir2.1, 2P, 23 C: dF/F -51.5% for -70 to +30 mV; activation 0.48 ms (fast component), deactivation 2.11 ms at 33 C. Land et al. 2026, Table 1, Suppl. Fig. 3"),
+    Indicator("JEDI3sub", "voltage", -0.635, 0.00063, 0.00223, 1000.0, 10.0,
+              "HEK293-Kir2.1, 2P, 23 C: dF/F -63.5% for -70 to +30 mV; activation 0.63 ms (fast component), deactivation 2.23 ms at 33 C. Land et al. 2026, Table 1, Suppl. Fig. 3"),
 )
 BY_NAME = {i.name: i for i in INDICATORS}
+KINDS = ("calcium", "voltage")
 
 FINE_HZ = {"calcium": 1000.0, "voltage": 20000.0}
 V_REST, V_PEAK = -65.0, 30.0  # mV
+RATE = {"calcium": 0.5, "voltage": 6.0}  # spikes / s the simulated cell fires
+BRIGHTNESS = {"calcium": 20.0, "voltage": 3.0}  # photons / pixel / frame at rest: the cell the pages open on
 
 
 @dataclass
@@ -90,8 +108,8 @@ class Trace:
 
     @property
     def baseline(self) -> float:
-        """F0: the signal's photons per frame at rest."""
-        return float(self.parts["signal"].min())
+        """F0: the cell's photons per frame at rest (the signal is that times 1 + dF/F)."""
+        return float(np.median(self.parts["signal"] / (1 + self.dff)))
 
 
 def spike_times(rate: float, duration: float, rng: np.random.Generator, refractory: float = 0.005) -> np.ndarray:
@@ -115,6 +133,16 @@ def calcium_kernel(rise: float, decay: float, dt: float) -> np.ndarray:
     return k / k.max()
 
 
+def ar1(x: np.ndarray, a: float, start: float = 0.0) -> np.ndarray:
+    """y[i] = a y[i-1] + x[i] with y[-1] = start, as one convolution: the kernel a**k is cut where it falls under 1e-9."""
+    k = a ** np.arange(int(np.ceil(np.log(1e-9) / np.log(a))) + 1) if 0 < a < 1 else np.ones(1)
+    head = np.full(k.size - 1, start * (1 - a))  # a run of `start` before the first sample, so y[-1] = start
+    full = np.concatenate([head, x])
+    n = full.size + k.size - 1
+    y = np.fft.irfft(np.fft.rfft(full, n) * np.fft.rfft(k, n), n)
+    return y[k.size - 1 : k.size - 1 + x.size]
+
+
 def membrane(times: np.ndarray, fine_t: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     """Membrane potential in mV: resting level, slow subthreshold wander, 1 ms spikes with an afterhyperpolarization."""
     dt = fine_t[1] - fine_t[0]
@@ -123,10 +151,7 @@ def membrane(times: np.ndarray, fine_t: np.ndarray, rng: np.random.Generator) ->
     tau, sd = 0.02, 3.0
     a = np.exp(-dt / tau)
     noise = rng.standard_normal(fine_t.size) * sd * np.sqrt(1 - a * a)
-    sub = np.zeros(fine_t.size)
-    for i in range(1, fine_t.size):
-        sub[i] = a * sub[i - 1] + noise[i]
-    v += sub
+    v += ar1(noise, a)
     w = np.arange(0, 0.015, dt)
     shape = (V_PEAK - V_REST) * np.exp(-((w - 0.0005) ** 2) / (2 * 0.00025**2)) - 6.0 * (w > 0.001) * np.exp(-(w - 0.001) / 0.006)
     for s in times:
@@ -139,12 +164,7 @@ def membrane(times: np.ndarray, fine_t: np.ndarray, rng: np.random.Generator) ->
 def lowpass(x: np.ndarray, rise: float, dt: float) -> np.ndarray:
     """First-order low-pass with time constant rise: an indicator that cannot follow faster than that."""
     a = np.exp(-dt / rise)
-    y = np.empty_like(x)
-    acc = x[0]
-    for i, v in enumerate(x):
-        acc = a * acc + (1 - a) * v
-        y[i] = acc
-    return y
+    return ar1((1 - a) * x, a, start=float(x[0]))
 
 
 def bin_frames(x: np.ndarray, per_frame: int) -> np.ndarray:
@@ -196,6 +216,88 @@ def make_trace(p: TraceParams) -> Trace:
     }
     on = {"bleaching": p.bleaching, "neuropil": p.background, "shot": p.shot, "read": p.read}
     return Trace(t, times, fine_t, fine_signal, dff, parts, on)
+
+
+def spike_response(ind: Indicator, fs: float) -> tuple[int, float]:
+    """
+    One spike's response as the camera sees it: (frames from the spike to the peak frame, |dF/F| at that frame).
+
+    The spike sits at the start of a frame; a calcium kernel or a 1 ms action potential through the indicator's
+    low-pass is averaged into frames and the largest frame taken.
+    """
+    fine = FINE_HZ[ind.kind]
+    per_frame = max(1, int(round(fine / fs)))
+    dt = 1.0 / (fs * per_frame)
+    if ind.kind == "calcium":
+        fine_dff = ind.amp * calcium_kernel(ind.rise, ind.decay, dt)
+    else:
+        t = np.arange(int(0.05 / dt)) * dt
+        v = V_REST + (V_PEAK - V_REST) * np.exp(-((t - 0.0005) ** 2) / (2 * 0.00025**2))
+        fine_dff = lowpass(ind.amp * (v - V_REST) / 100.0, ind.rise, dt)
+    frames = np.abs(bin_frames(fine_dff, per_frame))
+    at = int(np.argmax(frames))
+    return at, float(frames[at])
+
+
+def spike_peak(ind: Indicator, fs: float) -> float:
+    """|dF/F| at the peak frame of one spike's response: the SNR's numerator."""
+    return spike_response(ind, fs)[1]
+
+
+def noise_sd(brightness: float, pixels: int, read_noise: float, neuropil: float) -> float:
+    """SD of dF/F per frame from shot and read noise at rest, in units of the cell's resting light."""
+    rest = brightness * pixels
+    return float(np.sqrt(rest * (1 + neuropil) + read_noise**2 * pixels) / rest)
+
+
+def brightness_for_snr(peak: float, snr: float, pixels: int, read_noise: float, neuropil: float) -> float:
+    """The brightness at which peak / noise_sd equals snr: the positive root of the quadratic noise_sd gives."""
+    a = (peak / snr) ** 2 * pixels**2
+    b = pixels * (1 + neuropil)
+    c = read_noise**2 * pixels
+    return float((b + np.sqrt(b * b + 4 * a * c)) / (2 * a))
+
+
+def snr_of(peak: float, brightness: float, pixels: int, read_noise: float, neuropil: float) -> float:
+    return peak / noise_sd(brightness, pixels, read_noise, neuropil)
+
+
+@dataclass
+class Recording:
+    """The rail's choice, shared by every page that shows a trace: the indicator, how clearly one spike shows, and a file."""
+
+    indicator: str = "GCaMP6f"
+    snr: float = 0.0  # 0: the kind's opening brightness
+    path: str = ""  # a recorded trace; the Denoising page runs on it, the simulated cell stays on the other pages
+
+    @property
+    def kind(self) -> str:
+        return BY_NAME[self.indicator].kind
+
+    def default_snr(self) -> float:
+        ind = BY_NAME[self.indicator]
+        p = TraceParams()
+        return snr_of(spike_peak(ind, ind.fs), BRIGHTNESS[ind.kind], p.pixels, p.read_noise, p.neuropil)
+
+    def set_kind(self, kind: str) -> None:
+        """The first indicator of that kind, at its opening SNR."""
+        if kind != self.kind:
+            self.indicator = next(i.name for i in INDICATORS if i.kind == kind)
+            self.snr = 0.0
+
+    def params(self, **overrides) -> TraceParams:
+        """TraceParams for the simulated cell: the indicator's frame rate and length, the brightness this SNR needs."""
+        ind = BY_NAME[self.indicator]
+        p = TraceParams(indicator=ind.name, fs=ind.fs, duration=ind.duration, rate=RATE[ind.kind])
+        p = replace(p, **overrides)
+        snr = self.snr if self.snr > 0 else self.default_snr()
+        p.brightness = brightness_for_snr(spike_peak(ind, p.fs), snr, p.pixels, p.read_noise, p.neuropil)
+        return p
+
+
+def upright(dff: np.ndarray, ind: Indicator) -> np.ndarray:
+    """dF/F with depolarization up: unchanged for calcium and brightening indicators, negated for dimming ones."""
+    return -dff if ind.amp < 0 else dff
 
 
 BASELINES = ("whole recording", "running window")

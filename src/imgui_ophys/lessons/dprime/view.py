@@ -24,22 +24,26 @@ BAR = ImVec4(0.52, 0.52, 0.55, 1.0)  # scale bars sit back a little from the tra
 TRUTH = ImVec4(0.35, 0.85, 0.45, 1.0)  # ground truth spikes
 BEFORE = P.ACCENT  # the frames just before a spike
 PEAK = KEY  # the frames at the response peak
-FRAMES = 6  # frames in each window, the jGCaMP8 paper's six
+WINDOW = {"calcium": 6, "voltage": 1}  # frames in each window: the jGCaMP8 paper's six; a 1 ms spike fills one frame
+ZOOM = 24  # frames either side of the followed spike
 F0_WINDOW = 5.0  # s, the running 20th-percentile baseline
 MORPH = 1.2  # s a parameter change takes to play out: the trace morphs into the new one and d' counts along
 TARGETS = (0.5, 1.0, 2.0, 3.0, 4.0)  # the examples: white noise added to a clean cell until d' lands here
-# brightness, bleach, F0: the cells the story shows; the plot ranges are fixed over them so a change is seen as motion
-REFERENCE = ((20.0, 0.2, "running window"), (4.0, 0.2, "running window"), (100.0, 0.2, "running window"), (100.0, 0.35, "whole recording"))
+# the cells the story shows, as (brightness over the kind's opening brightness, bleach, F0); the plot ranges are
+# fixed over them so a change is seen as motion
+REFERENCE = ((1.0, 0.2, "running window"), (0.2, 0.2, "running window"), (5.0, 0.2, "running window"), (5.0, 0.35, "whole recording"))
 PRESETS = (
-    ("Add noise", 4.0, 0.2, "running window"),
-    ("Remove noise", 100.0, 0.2, "running window"),
-    ("Add photobleaching", 100.0, 0.35, "whole recording"),
-    ("Reset", 20.0, 0.2, "running window"),
+    ("Add noise", 0.2, 0.2, "running window"),
+    ("Remove noise", 5.0, 0.2, "running window"),
+    ("Add photobleaching", 5.0, 0.35, "whole recording"),
+    ("Reset", 1.0, 0.2, "running window"),
 )
+DURATION = {"calcium": 40.0, "voltage": 10.0}  # s
 
 
-def to_dff(f: np.ndarray, fs: float, f0: str) -> np.ndarray:
-    return sim.to_dff(f, sim.baseline(f, f0, int(F0_WINDOW * fs)))
+def to_dff(f: np.ndarray, fs: float, f0: str, ind: sim.Indicator) -> np.ndarray:
+    """dF/F against the chosen F0, with depolarization up whatever the indicator's polarity."""
+    return sim.upright(sim.to_dff(f, sim.baseline(f, f0, int(F0_WINDOW * fs))), ind)
 
 
 def nice(x: float) -> float:
@@ -72,18 +76,22 @@ def dots(color: ImVec4) -> implot.Spec:
     return sp
 
 
+def seconds_label(seconds: float) -> str:
+    return f"{seconds:g} s" if seconds >= 0.1 else f"{1000 * seconds:g} ms"
+
+
 def time_bar(dl, seconds: float, x_max: float, y: float) -> None:
     """A horizontal bar ending at x_max with its length written under it."""
     a, b = px(x_max - seconds, y), px(x_max, y)
     dl.add_line(a, b, u32(BAR), 3.0 * P.SCALE)
-    D.text(dl, 0.5 * (a.x + b.x), b.y + D.em(0.1), f"{seconds:g} s", BAR, 0.85, center=True)
+    D.text(dl, 0.5 * (a.x + b.x), b.y + D.em(0.1), seconds_label(seconds), BAR, 0.85, center=True)
 
 
-def dff_bar(dl, dff: float, x_max: float, y_hi: float) -> None:
+def dff_bar(dl, dff: float, x_max: float, y_hi: float, unit: str = "dF/F") -> None:
     """A vertical bar at x_max down from y_hi with its height written to its left."""
     a, b = px(x_max, y_hi - dff), px(x_max, y_hi)
     dl.add_line(a, b, u32(BAR), 3.0 * P.SCALE)
-    label = f"{100 * dff:g}% dF/F"
+    label = f"{100 * dff:g}% {unit}"
     D.text(dl, a.x - D.text_width(label, 0.85) - D.em(0.3), 0.5 * (a.y + b.y) - D.em(0.5), label, BAR, 0.85)
 
 
@@ -98,6 +106,7 @@ class DprimeLesson(Lesson):
     key = "dprime"
     title = "Signal quality (d')"
     summary = "a measure of how well spikes stand out from noise"
+    uses_recording = True
     sections = (
         (fa.ICON_FA_WAVE_SQUARE, "Trace"),
         (fa.ICON_FA_MAGNIFYING_GLASS, "Spike +/- 0.8 s"),
@@ -114,23 +123,43 @@ class DprimeLesson(Lesson):
     )
 
     def __init__(self):
-        self.params = sim.TraceParams(duration=40.0, seed=3)
+        self.params = self.cell(self.recording)
+        self.frames = WINDOW[self.recording.kind]
         self.f0 = "running window"
         self.chosen_time = math.nan  # s, the spike the zoom follows
         self.dff = None
         self.morph = MORPH  # s into the current morph
         self.reseed()
 
+    @staticmethod
+    def cell(recording: sim.Recording) -> sim.TraceParams:
+        return recording.params(duration=DURATION[recording.kind], seed=3)
+
+    def set_recording(self, recording: sim.Recording) -> None:
+        """A new indicator reseeds (new spike train, ranges and examples); a new SNR morphs the trace."""
+        self.recording = recording
+        was = self.params
+        self.params = replace(self.cell(recording), bleach=was.bleach)
+        self.frames = WINDOW[recording.kind]
+        if self.params.indicator != was.indicator:
+            self.reseed()
+        else:
+            self.make()
+
     @property
     def indicator(self) -> sim.Indicator:
         return sim.BY_NAME[self.params.indicator]
 
-    def dff_of(self, brightness: float, bleach: float, f0: str) -> np.ndarray:
-        p = replace(self.params, brightness=brightness, bleach=bleach)
-        return to_dff(sim.make_trace(p).recorded, p.fs, f0)
+    @property
+    def unit(self) -> str:
+        return "-dF/F" if self.indicator.amp < 0 else "dF/F"
+
+    def dff_of(self, times_brightness: float, bleach: float, f0: str) -> np.ndarray:
+        p = replace(self.params, brightness=times_brightness * sim.BRIGHTNESS[self.indicator.kind], bleach=bleach)
+        return to_dff(sim.make_trace(p).recorded, p.fs, f0, self.indicator)
 
     def rescore(self, dff: np.ndarray, spikes: np.ndarray) -> M.Score:
-        return M.score(dff, spikes, self.params.fs, self.peak, FRAMES, self.quiet)
+        return M.score(dff, spikes, self.params.fs, self.peak, self.frames, self.quiet)
 
     def reseed(self) -> None:
         """Everything that depends on the spike train: the plot ranges, the followed spike and the example rows."""
@@ -139,7 +168,8 @@ class DprimeLesson(Lesson):
         self.quiet = M.quiet_before(self.indicator)
         spikes = sim.make_trace(p).spikes
         traces = [self.dff_of(*cell) for cell in REFERENCE]
-        lo, hi = float(min(d.min() for d in traces)), float(max(d.max() for d in traces))
+        lo = float(min(np.percentile(d, 0.05) for d in traces))
+        hi = float(max(np.percentile(d, 99.95) for d in traces))
         pad = 0.05 * (hi - lo)
         self.y_range = (lo - pad, hi + pad)
         pools = np.concatenate([np.r_[s.top.ravel(), s.bottom.ravel()] for s in (self.rescore(d, spikes) for d in traces)])
@@ -153,9 +183,11 @@ class DprimeLesson(Lesson):
         amplitudes = base.amplitudes
         self.chosen_time = float(base.spikes[np.argmin(np.abs(amplitudes - np.median(amplitudes)))]) if base.n else math.nan
         clean = replace(p, brightness=5000.0, bleach=0.0, neuropil=0.0, read_noise=0.0)
-        dff_clean = to_dff(sim.make_trace(clean).recorded, p.fs, "running window")
+        dff_clean = to_dff(sim.make_trace(clean).recorded, p.fs, "running window", self.indicator)
+        half = ZOOM / p.fs
+        self.sections = (*self.sections[:1], (self.sections[1][0], f"Spike +/- {seconds_label(half)}"), *self.sections[2:])
         reachable = tuple(d for d in TARGETS if d < 0.98 * self.rescore(dff_clean, spikes).d)
-        self.examples = M.noise_rows(dff_clean, spikes, p.fs, self.peak, FRAMES, self.quiet, reachable)
+        self.examples = M.noise_rows(dff_clean, spikes, p.fs, self.peak, self.frames, self.quiet, reachable)
         self.dff = None
         self.make()
 
@@ -163,7 +195,7 @@ class DprimeLesson(Lesson):
         """Re-simulate and start the morph from what is on screen to the new trace; a new spike train snaps."""
         p = self.params
         self.trace = sim.make_trace(p)
-        self.dff_to = to_dff(self.trace.recorded, p.fs, self.f0)
+        self.dff_to = to_dff(self.trace.recorded, p.fs, self.f0, self.indicator)
         target = self.rescore(self.dff_to, self.trace.spikes)
         self.d_to = target.d
         self.chosen = int(np.argmin(np.abs(target.spikes - self.chosen_time))) if target.n else None
@@ -198,7 +230,7 @@ class DprimeLesson(Lesson):
     def zoom_bounds(self) -> tuple[int, int, int]:
         """(first frame, last frame + 1, spike frame) of the window around the followed spike."""
         center = int(self.score.centers[self.chosen])
-        half = 4 * FRAMES
+        half = ZOOM
         return max(0, center - half), min(self.dff.size, center + self.peak + half), center
 
     # ------------------------------------------------------------------
@@ -206,27 +238,21 @@ class DprimeLesson(Lesson):
     # ------------------------------------------------------------------
 
     def controls(self) -> None:
-        p = self.params
-        section(f"{fa.ICON_FA_CAMERA}  Light")
-        dirty = False
-        c, p.brightness = imgui.slider_float("brightness", p.brightness, 1.0, 200.0, "%.1f ph/px", imgui.SliderFlags_.logarithmic)
-        dirty |= c
-        c, p.bleach = imgui.slider_float("photobleaching", p.bleach, 0.0, 0.6, "%.2f")
-        dirty |= c
-        c, k = imgui.combo("F0", sim.BASELINES.index(self.f0), list(sim.BASELINES))
-        if c:
-            self.f0 = sim.BASELINES[k]
-        dirty |= c
-        for name, brightness, bleach, f0 in PRESETS:
+        """The story's cells: a fifth of the light, five times the light, and five times the light with photobleaching."""
+        section(f"{fa.ICON_FA_WAND_MAGIC_SPARKLES}  Cells")
+        rec, ind, p = self.recording, self.indicator, self.params
+        for name, times_brightness, bleach, f0 in PRESETS:
             if imgui.button(name):
-                p.brightness, p.bleach, self.f0 = brightness, bleach, f0
-                dirty = True
-        if dirty:
-            self.make()
-        c, p.seed = imgui.input_int("seed", p.seed)
-        if c:
-            self.reseed()
-        imgui.text_disabled(f"{FRAMES} frames per window; a spike is scored with none in the {self.quiet:.1f} s before it")
+                brightness = times_brightness * sim.BRIGHTNESS[ind.kind]
+                rec.snr = sim.snr_of(sim.spike_peak(ind, p.fs), brightness, p.pixels, p.read_noise, p.neuropil)
+                p.bleach, self.f0 = bleach, f0
+                if self.touch:
+                    self.touch()
+                else:
+                    self.set_recording(rec)
+        imgui.push_style_color(imgui.Col_.text, imgui.get_style_color_vec4(imgui.Col_.text_disabled))
+        imgui.text_wrapped(f"{self.frames} frame{'s' if self.frames > 1 else ''} per window; a spike is scored with none in the {seconds_label(self.quiet)} before it")
+        imgui.pop_style_color()
 
     # ------------------------------------------------------------------
     # page
@@ -248,8 +274,8 @@ class DprimeLesson(Lesson):
             if self.chosen is not None:
                 a, b, _ = self.zoom_bounds()
                 dl.add_rect(px(t[a], hi), px(t[b - 1], lo), u32(P.DIM), 0, 1.5 * P.SCALE)
-            time_bar(dl, 5.0, float(t[-1]), lo - 0.24 * span)
-            dff_bar(dl, nice(0.3 * span), float(t[-1]), hi)
+            time_bar(dl, nice(float(t[-1]) / 8), float(t[-1]), lo - 0.24 * span)
+            dff_bar(dl, nice(0.3 * span), float(t[-1]), hi, self.unit)
             implot.pop_plot_clip_rect()
             implot.end_plot()
 
@@ -263,15 +289,16 @@ class DprimeLesson(Lesson):
         a, b, center = self.zoom_bounds()
         lo, hi = self.z_range
         span = hi - lo
-        before = np.arange(center - FRAMES, center)
-        peak = np.arange(center + self.peak, center + self.peak + FRAMES)
+        before = np.arange(center - self.frames, center)
+        peak = np.arange(center + self.peak, center + self.peak + self.frames)
         if begin_hidden("##dprime_zoom", ImVec2(min(w * 0.6, 34 * em), 11 * em), float(t[a]), float(t[b - 1]), lo - 0.32 * span, hi, legend=True):
             implot.plot_line("##zoom", t[a:b], np.ascontiguousarray(dff[a:b]), P.spec(TRACE, 1.6))
-            implot.plot_scatter(f"{FRAMES} frames before the spike", t[before], np.ascontiguousarray(np.clip(dff[before], lo, hi)), dots(BEFORE))
-            implot.plot_scatter(f"{FRAMES} at the peak", t[peak], np.ascontiguousarray(np.clip(dff[peak], lo, hi)), dots(PEAK))
+            frames = f"{self.frames} frames" if self.frames > 1 else "the frame"
+            implot.plot_scatter(f"{frames} before the spike", t[before], np.ascontiguousarray(np.clip(dff[before], lo, hi)), dots(BEFORE))
+            implot.plot_scatter(f"{frames} at the peak", t[peak], np.ascontiguousarray(np.clip(dff[peak], lo, hi)), dots(PEAK))
             dl = implot.get_plot_draw_list()
             implot.push_plot_clip_rect()
-            time_bar(dl, 0.5, float(t[b - 1]), lo - 0.1 * span)
+            time_bar(dl, nice(float(t[b - 1] - t[a]) / 3), float(t[b - 1]), lo - 0.1 * span)
             implot.pop_plot_clip_rect()
             implot.end_plot()
 
@@ -307,7 +334,7 @@ class DprimeLesson(Lesson):
         push_size(2.2)
         imgui.text_colored(PEAK, f"d' = {s.d:.1f}")
         imgui.pop_font()
-        imgui.text_disabled(f"{s.n} spikes x {FRAMES} frames")
+        imgui.text_disabled(f"{s.n} spikes x {self.frames} frame{'s' if self.frames > 1 else ''}")
         imgui.end_group()
 
     def section_3(self) -> None:

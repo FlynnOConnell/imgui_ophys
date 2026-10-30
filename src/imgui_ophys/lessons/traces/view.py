@@ -1,7 +1,7 @@
 """
 The Traces stage: one ROI's recording from spikes to photons, for calcium or voltage indicators. Subsections: indicator
-response, dF/F and its baseline, neuropil, bleaching and noise (each part switchable), and temporal smoothing, which
-lowers and widens the average event.
+response, dF/F and its baseline, neuropil, bleaching and noise (each part switchable on the page), and temporal
+smoothing at two widths, which lowers and widens the average event. The cell comes from the rail's Recording.
 """
 
 import numpy as np
@@ -12,7 +12,7 @@ from imgui_ophys import diagram as D
 from imgui_ophys import plotting as P
 from imgui_ophys import sim
 from imgui_ophys.lesson import Lesson
-from imgui_ophys.widgets import KEY, help_mark, section
+from imgui_ophys.widgets import KEY
 
 ImVec2, ImVec4 = imgui.ImVec2, imgui.ImVec4
 TRUTH = ImVec4(0.35, 0.85, 0.45, 1.0)
@@ -24,13 +24,16 @@ PARTS = (
     ("read", ImVec4(0.75, 0.75, 0.78, 1.0), "the camera's electronics, the same every frame"),
 )
 DOT_FRAMES = 8
-PRESETS = {"calcium": dict(rate=0.5, brightness=20.0), "voltage": dict(rate=6.0, brightness=3.0)}
+WIDTHS = (1.0, 3.0)  # Gaussian SDs in frames the smoothing section shows
+SMOOTH = (P.ACCENT, ImVec4(0.91, 0.48, 0.64, 1.0))  # one color per width
+F0_WINDOW = 5.0  # s, the running 20th-percentile baseline
 
 
 class TracesLesson(Lesson):
     key = "traces"
     title = "Traces"
     summary = "from spikes to fluorescence to dF/F"
+    uses_recording = True
     sections = (
         (fa.ICON_FA_BOLT, "Indicator response"),
         (fa.ICON_FA_PERCENT, "dF/F"),
@@ -53,12 +56,15 @@ class TracesLesson(Lesson):
     )
 
     def __init__(self):
-        self.params = sim.TraceParams()
-        self.method = "gaussian"
-        self.width = 1.0  # frames
-        self.baseline = "whole recording"
-        self.window = 5.0  # s, for the running baseline
+        self.params = self.recording.params()
+        self.baseline = "running window"
         self.dot_clock = 0.0
+        self.make()
+
+    def set_recording(self, recording: sim.Recording) -> None:
+        self.recording = recording
+        on = self.params
+        self.params = recording.params(shot=on.shot, read=on.read, background=on.background, bleaching=on.bleaching)
         self.make()
 
     def make(self) -> None:
@@ -68,17 +74,17 @@ class TracesLesson(Lesson):
     def refilter(self) -> None:
         tr = self.trace
         f = tr.recorded
-        self.f0 = sim.baseline(f, self.baseline, int(self.window * self.params.fs))
+        self.f0 = sim.baseline(f, self.baseline, int(F0_WINDOW * self.params.fs))
         self.dff = sim.to_dff(f, self.f0)
         self.clean = self.trace.dff
-        self.smooth = sim.denoise(self.dff, self.method, self.width)
+        self.smooth = {w: sim.denoise(self.dff, "gaussian", w) for w in WIDTHS}
         fs = self.params.fs
         ind = sim.BY_NAME[self.params.indicator]
         span = (0.2, 2.0) if ind.kind == "calcium" else (0.01, 0.03)
         iso = span[1] if ind.kind == "calcium" else 0.03
         self.lag, self.ev_truth = sim.event_average(self.clean, tr.spikes, fs, span[0], span[1], iso)
         _, self.ev_raw = sim.event_average(self.dff, tr.spikes, fs, span[0], span[1], iso)
-        _, self.ev_smooth = sim.event_average(self.smooth, tr.spikes, fs, span[0], span[1], iso)
+        self.ev_smooth = {w: sim.event_average(self.smooth[w], tr.spikes, fs, span[0], span[1], iso)[1] for w in WIDTHS}
 
     @property
     def indicator(self) -> sim.Indicator:
@@ -89,75 +95,6 @@ class TracesLesson(Lesson):
 
     def animating(self) -> bool:
         return True  # the photon dots re-roll
-
-    # ------------------------------------------------------------------
-    # rail
-    # ------------------------------------------------------------------
-
-    def controls(self) -> None:
-        p = self.params
-        section(f"{fa.ICON_FA_DNA}  Indicator")
-        names = [i.name for i in sim.INDICATORS]
-        changed, idx = imgui.combo("indicator", names.index(p.indicator), names)
-        if changed:
-            new = sim.INDICATORS[idx]
-            if new.kind != self.indicator.kind:
-                p.fs, p.duration = new.fs, new.duration
-                p.rate, p.brightness = PRESETS[new.kind]["rate"], PRESETS[new.kind]["brightness"]
-            p.indicator = new.name
-            self.make()
-        help_mark(self.indicator.note)
-        dirty = False
-        for label, attr, lo, hi, fmt in (
-            ("frame rate", "fs", 5.0, 2000.0, "%.0f Hz"),
-            ("duration", "duration", 1.0, 120.0, "%.0f s"),
-            ("spike rate", "rate", 0.05, 20.0, "%.2f /s"),
-        ):
-            c, v = imgui.slider_float(label, getattr(p, attr), lo, hi, fmt, imgui.SliderFlags_.logarithmic)
-            if c:
-                setattr(p, attr, v)
-                dirty = True
-
-        section(f"{fa.ICON_FA_CAMERA}  Light")
-        for label, attr, lo, hi, fmt, tip in (
-            ("brightness", "brightness", 0.2, 200.0, "%.1f ph/px", "Photons per pixel per frame at rest."),
-            ("ROI pixels", "pixels", 1, 500, "%d", "Pixels averaged into the trace."),
-            ("read noise", "read_noise", 0.0, 10.0, "%.1f e-", "Electrons RMS per pixel per frame."),
-            ("neuropil", "neuropil", 0.0, 1.5, "%.2f", "Neuropil light / ROI light."),
-            ("bleaching", "bleach", 0.0, 0.8, "%.2f", "Fraction of light lost by the end."),
-        ):
-            if attr == "pixels":
-                c, v = imgui.slider_int(label, p.pixels, lo, hi, fmt, imgui.SliderFlags_.logarithmic)
-            else:
-                c, v = imgui.slider_float(label, getattr(p, attr), lo, hi, fmt, imgui.SliderFlags_.logarithmic if attr == "brightness" else 0)
-            if c:
-                setattr(p, attr, v)
-                dirty = True
-            help_mark(tip)
-        c, p.seed = imgui.input_int("seed", p.seed)
-        dirty |= c
-        if dirty:
-            self.make()
-
-        section(f"{fa.ICON_FA_PERCENT}  dF/F")
-        changed, idx = imgui.combo("F0", sim.BASELINES.index(self.baseline), sim.BASELINES)
-        if changed:
-            self.baseline = sim.BASELINES[idx]
-            self.refilter()
-        help_mark("F0: the 20th percentile of F, over the whole recording or a running window.")
-        c, self.window = imgui.slider_float("window", self.window, 0.2, 60.0, "%.1f s", imgui.SliderFlags_.logarithmic)
-        if c:
-            self.refilter()
-
-        section(f"{fa.ICON_FA_FILTER}  Smoothing")
-        changed, idx = imgui.combo("method", sim.DENOISERS.index(self.method), sim.DENOISERS)
-        if changed:
-            self.method = sim.DENOISERS[idx]
-            self.refilter()
-        c, self.width = imgui.slider_float("width", self.width, 0.2, 30.0, "%.1f frames", imgui.SliderFlags_.logarithmic)
-        if c:
-            self.refilter()
-        help_mark("Box length, Gaussian SD, or exponential time constant, in frames.")
 
     def zoom(self) -> tuple[float, float]:
         """A window around the first spike with room on both sides: (t0, t1) in s."""
@@ -285,7 +222,7 @@ class TracesLesson(Lesson):
             bw = D.text_width(label) + 1.4 * em
             D.box(dl, bx, y, bw, 2.0 * em, label, color)
             bx += bw
-        D.text(dl, bx + 1.5 * em, y + 0.5 * em, f"F0 = 20th percentile, {self.baseline}" + (f" ({self.window:.1f} s)" if self.baseline != "whole recording" else ""), P.DIM, 0.8)
+        D.text(dl, bx + 1.5 * em, y + 0.5 * em, f"F0 = 20th percentile of F over a running {F0_WINDOW:g} s window", P.DIM, 0.8)
         x, y = D.canvas(w, 13.5 * em)
         D.text(dl, x, y, "F: photons per frame, and F0", P.DIM, 0.75)
         f0 = np.broadcast_to(self.f0, f.shape)
@@ -300,8 +237,6 @@ class TracesLesson(Lesson):
         notes = []
         if parts.get("neuropil"):
             notes.append("neuropil light raises F0, so every dF/F comes out smaller")
-        if parts.get("bleaching") and self.baseline == "whole recording":
-            notes.append("bleaching drifts F under a fixed F0: try the running window")
         if notes:
             imgui.text_disabled("  /  ".join(notes))
 
@@ -353,7 +288,7 @@ class TracesLesson(Lesson):
         self.refilter()
 
     def section_3(self) -> None:
-        D.heading(fa.ICON_FA_FILTER, "Temporal smoothing", "Smoothing averages neighbouring frames: less noise, but events get lower and wider. Fast voltage spikes suffer most.")
+        D.heading(fa.ICON_FA_FILTER, "Temporal smoothing", f"A Gaussian over neighbouring frames, SD {WIDTHS[0]:g} and {WIDTHS[1]:g} frames: less noise, but events get lower and wider. Fast voltage spikes suffer most.")
         em = D.em()
         tr = self.trace
         h = 14 * em
@@ -361,8 +296,8 @@ class TracesLesson(Lesson):
             implot.setup_axes("s", "dF/F", 0, implot.AxisFlags_.auto_fit)
             implot.plot_line("recorded", tr.t, np.ascontiguousarray(self.dff), P.spec(P.RAW, 1.0))
             implot.plot_line("truth", tr.t, np.ascontiguousarray(self.clean), P.spec(TRUTH, 1.5))
-            if self.method != "none":
-                implot.plot_line(f"{self.method}", tr.t, np.ascontiguousarray(self.smooth), P.spec(P.ACCENT, 2.0))
+            for w, color in zip(WIDTHS, SMOOTH):
+                implot.plot_line(f"SD {w:g} frames", tr.t, np.ascontiguousarray(self.smooth[w]), P.spec(color, 2.0))
             if tr.spikes.size:
                 implot.plot_inf_lines("spikes", np.ascontiguousarray(tr.spikes), P.spec(ImVec4(P.HIGHLIGHT.x, P.HIGHLIGHT.y, P.HIGHLIGHT.z, 0.35), 1.0))
             implot.end_plot()
@@ -376,40 +311,29 @@ class TracesLesson(Lesson):
             lag = np.ascontiguousarray(self.lag)
             implot.plot_line("truth", lag, np.ascontiguousarray(self.ev_truth), P.spec(TRUTH, 2.0))
             implot.plot_line("recorded", lag, np.ascontiguousarray(self.ev_raw), P.spec(P.RAW, 1.0))
-            if self.method != "none":
-                implot.plot_line(self.method, lag, np.ascontiguousarray(self.ev_smooth), P.spec(P.ACCENT, 2.0))
+            for width, color in zip(WIDTHS, SMOOTH):
+                implot.plot_line(f"SD {width:g} frames", lag, np.ascontiguousarray(self.ev_smooth[width]), P.spec(color, 2.0))
             implot.end_plot()
         imgui.same_line(0, 1.5 * em)
         imgui.begin_group()
         imgui.text_colored(KEY, "average isolated event")
         for label, value in self.metrics():
             imgui.text_disabled(label)
-            imgui.same_line(12 * em)
+            imgui.same_line(13 * em)
             imgui.text(value)
         imgui.end_group()
 
     def metrics(self) -> list[tuple[str, str]]:
-        def peak(x: np.ndarray) -> float:
-            return float(x[np.argmax(np.abs(x))]) if x.size else 0.0
-
-        def noise(x: np.ndarray) -> float:
-            return float(np.std(x - self.clean))
-
-        truth_peak = peak(self.ev_truth)
-        out = [
-            ("noise SD, recorded", f"{noise(self.dff):.3f}"),
-            ("noise SD, smoothed", f"{noise(self.smooth):.3f}"),
-        ]
-        if truth_peak:
-            raw_p, sm_p = peak(self.ev_raw), peak(self.ev_smooth)
-            out += [
-                ("peak kept, recorded", f"{100 * raw_p / truth_peak:.0f}%"),
-                ("peak kept, smoothed", f"{100 * sm_p / truth_peak:.0f}%"),
-                ("SNR, recorded", f"{abs(truth_peak) / max(noise(self.dff), 1e-9):.1f}"),
-                ("SNR, smoothed", f"{abs(sm_p) / max(noise(self.smooth), 1e-9):.1f}"),
-            ]
-            d = (np.argmax(np.abs(self.ev_smooth)) - np.argmax(np.abs(self.ev_truth))) / self.params.fs
-            out.append(("peak delay", f"{1000 * d:+.0f} ms"))
-        else:
-            out.append(("events", "no isolated spike"))
+        """Noise SD, the share of the event's peak kept, and the SNR, for the recorded trace and each smoothing."""
+        if not self.ev_truth.size or not np.any(self.ev_truth):
+            return [("events", "no isolated spike")]
+        at = int(np.argmax(np.abs(self.ev_truth)))  # the frame of the true event's peak; the others are read there
+        truth_peak = float(self.ev_truth[at])
+        rows = [("recorded", self.dff, self.ev_raw)] + [(f"SD {w:g} frames", self.smooth[w], self.ev_smooth[w]) for w in WIDTHS]
+        out = []
+        for name, trace, event in rows:
+            sd = float(np.std(trace - self.clean))
+            out.append((f"noise SD, {name}", f"{sd:.3f}"))
+            out.append((f"peak kept, {name}", f"{100 * event[at] / truth_peak:.0f}%"))
+            out.append((f"SNR, {name}", f"{abs(event[at]) / max(sd, 1e-9):.1f}"))
         return out

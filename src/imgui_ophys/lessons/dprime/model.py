@@ -75,15 +75,14 @@ def accuracy(d: float) -> float:
 
 
 def peak_frames(indicator: sim.Indicator, fs: float) -> int:
-    """Frames from a spike to the peak of the indicator's single-spike response."""
-    dt = 1e-3
-    k = sim.calcium_kernel(indicator.rise, indicator.decay, dt)
-    return int(round(float(np.argmax(k)) * dt * fs))
+    """Frames from a spike to the peak of the indicator's single-spike response, after the exposure's averaging."""
+    return sim.spike_response(indicator, fs)[0]
 
 
 def quiet_before(indicator: sim.Indicator) -> float:
     """s a spike must have had to itself beforehand, so the last response has decayed out of its baseline window."""
-    return max(0.5, QUIET_DECAYS * indicator.decay)
+    floor = 0.5 if indicator.kind == "calcium" else 0.05
+    return max(floor, QUIET_DECAYS * indicator.decay)
 
 
 def isolated(spikes: np.ndarray, before: float, after: float) -> np.ndarray:

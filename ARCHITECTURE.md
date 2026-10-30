@@ -3,18 +3,24 @@
 ## Modules
 
 - `app.py`: `App`, the window. The rail lists `LESSONS`; under the current stage, its
-  `sections` (a click sets `lesson.jump`, which scrolls the page there); below them the stage's `controls()`. The
-  page on the right is `lesson.page()`. The menu bar has Stages and, when imgui_debugger is installed (the `debug`
-  extra), its `DebugTools` (inspector targeted at the current page, style editor, imgui's tools). `run(argv)` is
-  the `imgui-ophys` entry point.
+  `sections` (a click sets `lesson.jump`, which scrolls the page there); below them the shared Recording block
+  (`draw_recording`: calcium / voltage, indicator, SNR, a file) when the stage `uses_recording`, then the stage's
+  own `controls()`. The page on the right is `lesson.page()`. The menu bar has Stages and, when imgui_debugger is
+  installed (the `debug` extra), its `DebugTools` (inspector targeted at the current page, style editor, imgui's
+  tools). `run(argv)` is the `imgui-ophys` entry point.
 - `lesson.py`: `Lesson`, the base class: `key`, `title`, `summary`, `sections`, `group` (empty for a pipeline
   stage; otherwise the rail lists it unnumbered under that header, after the stages), `references` ((citation, url),
-  drawn as a last References subsection); `page()` draws `section_<i>()` in order and honours `jump`. `Lesson.goto(key)` (set by `App`) opens another stage.
+  drawn as a last References subsection), `uses_recording` and `set_recording(recording)`; `page()` draws
+  `section_<i>()` in order and honours `jump`. `Lesson.goto(key)` (set by `App`) opens another stage; `Lesson.touch()`
+  (set by `App`) says the page changed the shared Recording itself, as the d' presets do.
 - `lessons/<name>/model.py`: one stage's numbers, pure numpy, tested without imgui.
 - `lessons/<name>/view.py`: the stage's `Lesson` subclass.
 - `sim.py`: Poisson spikes, calcium kernels and a membrane model with GEVI kinetics on a fine grid, averaged into
   camera frames, then photons per frame with shot, read, neuropil and bleaching kept as separate parts
-  (`Trace.parts`, `Trace.on`). Baselines (F0), denoisers and the isolated-event average.
+  (`Trace.parts`, `Trace.on`). `Recording` is the rail's choice; `Recording.params()` turns its SNR into a
+  brightness through the closed form `brightness_for_snr` (one spike's peak dF/F, `spike_response`, over the shot
+  and read noise SD of dF/F at rest, `noise_sd`). `upright` puts depolarization up for dimming indicators. Baselines
+  (F0), denoisers and the isolated-event average.
 - `diagram.py`: draw-list figures: `matrix` (a 2-D array cell by cell, values written in, rows / columns / cells
   outlined, returns the hovered cell), `stack` (frames as a deck), `sparkline`, `ticks`, `box`, `arrow`,
   `chip_row`, `segments` (colored text runs), `heading`, `canvas`.
@@ -28,8 +34,10 @@ scale handling and plotting helpers follow imgui_vnoiser.
 
 ## Frame
 
-`App.gui` applies the scale, calls `lesson.update(dt)`, then draws. While `lesson.animating()` is true, hello_imgui's
-idling is off so playback and iterative fits run at full rate; otherwise the window idles at 20 fps.
+`App.gui` applies the scale, hands a changed Recording to the current stage (`sync_recording`: a version counter,
+so a stage rebuilds once, when it is next drawn), calls `lesson.update(dt)`, then draws. While `lesson.animating()`
+is true, hello_imgui's idling is off so playback and iterative fits run at full rate; otherwise the window idles at
+20 fps. The SNR slider applies on release.
 
 ## Pages
 
@@ -42,15 +50,20 @@ idling is off so playback and iterative fits run at full rate; otherwise the win
 - Demixing (NMF): `guide.py` follows `make_tiny()` (6 x 6 x 24) from frames to footprints; HALS steps `HalsWalk`, one
   trace or footprint update at a time (a sweep equals `NMF.step`, tested). NMF vs PCA fits `make_movie()`
   (24 x 24 x 300) live.
-- Traces: `sim.make_trace` once per parameter change; the parts switch on and off without resimulating
-  (`Trace.on`). dF/F uses F0 = the 20th percentile of what was recorded, over the whole recording or a running
-  window.
+- Traces: `sim.make_trace` once per Recording change; the parts switch on and off on the page without
+  resimulating (`Trace.on`). dF/F uses F0 = the 20th percentile of what was recorded over a running 5 s window;
+  smoothing is a Gaussian at SD 1 and 3 frames.
 - Signal quality (`dprime/model.py`): d' as in the jGCaMP8 paper, (mean top - mean bottom) / pooled SD, on the
   Traces simulator with the spike times known: `score` takes a window of frames before each isolated spike and one
-  from the response peak on, pooled across spikes; `accuracy` is Phi(d' / 2). `noise_rows` adds white noise to a
-  clean trace by bisection until d' lands on each target, for the example rows. The view follows one spike
-  (median amplitude) and keeps its plot ranges fixed over the reference cells, so a light or bleaching change moves
-  the dots instead of the axes.
+  from the response peak on, pooled across spikes; `accuracy` is Phi(d' / 2). The window is 6 frames for calcium and
+  1 for voltage (`WINDOW`), the peak frame comes from `sim.spike_response`, and dimming indicators are scored on
+  -dF/F. `noise_rows` adds white noise to a clean trace by bisection until d' lands on each target, for the example
+  rows. The view follows one spike (median amplitude) and keeps its plot ranges fixed over the reference cells (the
+  opening brightness, a fifth of it, five times it, five times it bleached), so a light or bleaching change moves
+  the dots instead of the axes. A new indicator reseeds; a new SNR morphs.
+- Denoising (`denoise/model.py`): vnoiser's `Denoiser.upstream` on the cell's z-scored dF/F (or a file's), the
+  stages kept for drawing, `final_trace` and `detect_peaks` as `process_domain` runs them, and the peaks matched to
+  the simulated spikes within 10 ms. vnoiser is imported inside the model, so the package runs without it.
 - SVD (under Other, `svd/model.py`): `Peel` finds the pieces one at a time by power iteration and deflation (u = R v,
   v = R' u until v settles, then subtract s u v'), one half-step per click; its pieces equal `np.linalg.svd`'s
   (tested). Signs are fixed so each U column's largest entry is positive.

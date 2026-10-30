@@ -43,7 +43,7 @@ class MotionLesson(Lesson):
         self.bends = True
         self.max_shift = 3.0
         self.noise = 0.04
-        self.seed_frames = 10
+        self.seed_frames = 20  # suite2p's default
         self.frame, self.playing, self.accum = 0, True, 0.0
         self.make()
 
@@ -77,10 +77,6 @@ class MotionLesson(Lesson):
         section(f"{fa.ICON_FA_UP_DOWN_LEFT_RIGHT}  Motion")
         changed, self.bends = imgui.checkbox("tissue bends", self.bends)
         help_mark("Off: the whole field moves together (rigid motion). On: it also bends smoothly, up to 1 px either way, so different parts move differently.")
-        _, self.max_shift = imgui.slider_float("max shift", self.max_shift, 0.0, 5.0, "%.1f px")
-        changed |= imgui.is_item_deactivated_after_edit()
-        _, self.noise = imgui.slider_float("noise", self.noise, 0.0, 0.4, "%.2f")
-        changed |= imgui.is_item_deactivated_after_edit()
         if changed:
             self.make()
         section(f"{fa.ICON_FA_PLAY}  Playback")
@@ -90,11 +86,6 @@ class MotionLesson(Lesson):
         c, f = imgui.slider_int("frame", self.frame, 0, len(self.motion.frames) - 1)
         if c:
             self.frame, self.playing = f, False
-        section(f"{fa.ICON_FA_IMAGE}  Reference image")
-        _, self.seed_frames = imgui.slider_int("seed frames", self.seed_frames, 2, 30)
-        if imgui.is_item_deactivated_after_edit():
-            self.make_reference()
-        help_mark("How many most-correlated frames are averaged with the seed frame. suite2p uses 20.")
 
     # ------------------------------------------------------------------
 

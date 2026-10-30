@@ -131,45 +131,23 @@ class NmfLesson(Lesson):
     # ------------------------------------------------------------------
 
     def controls(self) -> None:
-        imgui.text_disabled("NMF vs PCA")
-        section(f"{fa.ICON_FA_WAND_MAGIC_SPARKLES}  Method")
+        section(f"{fa.ICON_FA_WAND_MAGIC_SPARKLES}  NMF vs PCA")
         for i, (mode, label) in enumerate(METHODS):
             if i:
                 imgui.same_line()
             if imgui.radio_button(label, self.mode == mode):
                 self.run(mode)
-        section(f"{fa.ICON_FA_LAYER_GROUP}  Fit")
         changed, k = imgui.slider_int("parts (K)", self.k, 1, MAX_K)
         if changed:
             self.k = k
             if self.mode in ("nmf", "pca"):
                 self.run(self.mode)
         help_mark("The movie has 4: three cells and the background.")
-        _, self.max_iters = imgui.slider_int("iterations", self.max_iters, 10, 500)
-        _, self.iters_per_frame = imgui.slider_int("speed", self.iters_per_frame, 1, 20)
-        help_mark("NMF sweeps per screen frame.")
-        if imgui.button(f"{fa.ICON_FA_DICE}  New random start"):
-            self.nmf_seed += 1
-            self.run("nmf")
-        help_mark("Refit NMF from another random guess.")
-
         section(f"{fa.ICON_FA_FILM}  Movie")
-        p = self.params
-        changes = [
-            imgui.slider_float("noise", p.noise, 0.0, 0.5, "%.2f"),
-            imgui.slider_float("bleaching", p.bleach, 0.0, 1.5, "%.2f"),
-            imgui.input_int("seed", p.seed),
-        ]
-        if any(c for c, _ in changes):
-            p.noise, p.bleach, p.seed = (v for _, v in changes)
-            self.make_movie()
-
-        section(f"{fa.ICON_FA_PLAY}  Playback")
         if imgui.button(fa.ICON_FA_PAUSE if self.playing else fa.ICON_FA_PLAY):
             self.playing = not self.playing
         imgui.same_line()
-        _, self.fps = imgui.slider_float("frames/s", self.fps, 1.0, 60.0, "%.0f")
-        _, self.view = imgui.combo("movie", self.view, VIEWS)
+        _, self.view = imgui.combo("##movie", self.view, VIEWS)
 
     # ------------------------------------------------------------------
     # page
@@ -265,7 +243,7 @@ class NmfLesson(Lesson):
             imgui.text_colored(KEY, "?")
 
     def movie_image(self) -> tuple[np.ndarray, float, float, int]:
-        """What the movie panel shows for the current view: (image, vmin, vmax, colormap)."""
+        """The movie panel for the current view: (image, vmin, vmax, colormap)."""
         Y, f = self.movie.Y, self.frame
         view = self.view if self.A is not None else min(self.view, 1)
         if view == 1:

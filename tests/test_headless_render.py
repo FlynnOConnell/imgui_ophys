@@ -53,7 +53,7 @@ def test_every_stage_and_subsection_renders():
         for j in range(len(lesson.outline())):
             steps.append(lambda a, j=j: setattr(a.lesson, "jump", j))
     run_frames(app, steps)
-    assert [x.key for x in app.lessons] == ["motion", "nmf", "traces", "dprime", "svd"]
+    assert [x.key for x in app.lessons] == ["motion", "nmf", "traces", "dprime", "denoise", "svd"]
 
 
 def test_nmf_every_method_and_view_renders():
@@ -71,19 +71,31 @@ def test_nmf_every_method_and_view_renders():
     assert lesson.guide.walk.sweep == 1
 
 
-def test_traces_every_indicator_part_and_denoiser_renders():
+def test_traces_every_indicator_and_part_renders():
     from imgui_ophys import sim
 
     app = App(lesson="traces")
     steps = []
     for ind in sim.INDICATORS:
-        steps.append(lambda a, i=ind: (setattr(a.lesson.params, "indicator", i.name), setattr(a.lesson.params, "fs", i.fs),
-                                       setattr(a.lesson.params, "duration", i.duration), a.lesson.make()))
+        steps.append(lambda a, i=ind: a.lesson.set_recording(sim.Recording(indicator=i.name)))
     for name in ("bleaching", "neuropil", "shot", "read"):
         steps.append(lambda a, n=name: a.lesson.toggle(n))
-    for base in sim.BASELINES:
-        steps.append(lambda a, b=base: (setattr(a.lesson, "baseline", b), a.lesson.refilter()))
-    for method in sim.DENOISERS:
-        steps.append(lambda a, m=method: (setattr(a.lesson, "method", m), a.lesson.refilter()))
+    steps.append(lambda a: a.lesson.set_recording(sim.Recording(indicator="GCaMP6f", snr=1.0)))
     run_frames(app, steps)
     assert not any(app.lesson.trace.on.values())
+    assert app.lesson.params.brightness < sim.BRIGHTNESS["calcium"]
+
+
+def test_dprime_every_kind_and_preset_renders():
+    from imgui_ophys import sim
+    from imgui_ophys.lessons.dprime.view import PRESETS
+
+    app = App(lesson="dprime")
+    steps = [lambda a: a.lesson.set_recording(sim.Recording(indicator="JEDI3sub"))]
+    for j in range(len(app.lesson.outline())):
+        steps.append(lambda a, j=j: setattr(a.lesson, "jump", j))
+    steps.append(lambda a: a.lesson.set_recording(sim.Recording(indicator="GCaMP6f")))
+    run_frames(app, steps)
+    assert app.lesson.indicator.kind == "calcium"
+    assert app.lesson.sections[1][1] == "Spike +/- 0.8 s"
+    assert len(PRESETS) == 4

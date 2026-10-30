@@ -27,10 +27,44 @@ def test_calcium_spike_reaches_its_amplitude():
 
 
 def test_voltage_indicator_dims_on_a_spike_and_frames_blur_it():
-    fast = sim.make_trace(sim.TraceParams(indicator="ASAP3", fs=2000, duration=2, rate=5, seed=3))
-    slow = sim.make_trace(sim.TraceParams(indicator="ASAP3", fs=200, duration=2, rate=5, seed=3))
+    fast = sim.make_trace(sim.TraceParams(indicator="JEDI3sub", fs=2000, duration=2, rate=5, seed=3))
+    slow = sim.make_trace(sim.TraceParams(indicator="JEDI3sub", fs=200, duration=2, rate=5, seed=3))
     assert fast.dff.min() < 0
     assert fast.dff.min() < slow.dff.min()  # a 5 ms exposure averages most of a 1 ms spike away
+    bright = sim.make_trace(sim.TraceParams(indicator="ASAP6.3", fs=1000, duration=2, rate=5, seed=3))
+    assert bright.dff.max() > 0 and np.allclose(sim.upright(bright.dff, sim.BY_NAME["ASAP6.3"]), bright.dff)
+    assert np.allclose(sim.upright(fast.dff, sim.BY_NAME["JEDI3sub"]), -fast.dff)
+
+
+def test_ar1_matches_the_recurrence():
+    rng = np.random.default_rng(0)
+    x = rng.standard_normal(3000)
+    a = np.exp(-1 / 200)
+    y, acc = np.empty_like(x), 0.5
+    for i, v in enumerate(x):
+        acc = a * acc + v
+        y[i] = acc
+    assert np.allclose(sim.ar1(x, a, start=0.5), y, atol=1e-9)
+
+
+def test_snr_slider_round_trips_through_brightness():
+    for name in ("GCaMP6f", "JEDI3sub", "ASAP6.3"):
+        ind = sim.BY_NAME[name]
+        peak = sim.spike_peak(ind, ind.fs)
+        for snr in (0.5, 3.0, 20.0):
+            brightness = sim.brightness_for_snr(peak, snr, 50, 1.5, 0.3)
+            assert abs(sim.snr_of(peak, brightness, 50, 1.5, 0.3) - snr) < 1e-9
+    rec = sim.Recording(indicator="GCaMP6f")
+    assert abs(rec.params().brightness - sim.BRIGHTNESS["calcium"]) < 1e-9
+    rec.set_kind("voltage")
+    assert rec.kind == "voltage" and abs(rec.params().brightness - sim.BRIGHTNESS["voltage"]) < 1e-9
+
+
+def test_snr_formula_matches_the_simulated_noise():
+    p = sim.Recording(indicator="GCaMP6f").params(duration=120.0, rate=0.0, bleach=0.0)
+    tr = sim.make_trace(p)
+    measured = np.std((tr.parts["shot"] + tr.parts["read"]) / tr.baseline)
+    assert abs(measured - sim.noise_sd(p.brightness, p.pixels, p.read_noise, p.neuropil)) < 0.05 * measured
 
 
 def test_smoothing_lowers_noise_and_peaks():
@@ -43,7 +77,7 @@ def test_smoothing_lowers_noise_and_peaks():
 
 
 def test_neuropil_is_steady_from_the_first_frame():
-    for ind in ("GCaMP6f", "ASAP3"):
+    for ind in ("GCaMP6f", "JEDI3sub"):
         i = sim.BY_NAME[ind]
         tr = sim.make_trace(sim.TraceParams(indicator=ind, fs=i.fs, duration=i.duration, rate=5))
         n = tr.parts["neuropil"]
